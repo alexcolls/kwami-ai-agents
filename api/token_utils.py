@@ -2,9 +2,14 @@
 
 from datetime import timedelta
 
-from livekit.api import AccessToken, VideoGrants
+from livekit import api
+from livekit.protocol.room import RoomConfiguration
+from livekit.protocol.agent_dispatch import RoomAgentDispatch
 
 from config import settings
+
+# Default agent name deployed to LiveKit Cloud
+DEFAULT_AGENT_NAME = "kwami-agent"
 
 
 def create_token(
@@ -21,6 +26,9 @@ def create_token(
     room_create: bool = False,
     room_admin: bool = False,
     agent: bool = False,
+    dispatch_agent: bool = True,
+    agent_name: str | None = None,
+    kwami_id: str | None = None,
 ) -> str:
     """
     Create a LiveKit access token.
@@ -38,6 +46,9 @@ def create_token(
         room_create: Allow creating rooms
         room_admin: Admin privileges
         agent: Whether this token is for an agent
+        dispatch_agent: Whether to dispatch the Kwami agent to the room
+        agent_name: Name of the agent to dispatch (defaults to kwami-agent)
+        kwami_id: Kwami instance ID to pass to the agent
 
     Returns:
         JWT token string
@@ -45,25 +56,34 @@ def create_token(
     identity = participant_identity or participant_name
     token_ttl = ttl or timedelta(hours=6)
 
-    grants = VideoGrants(
-        room=room_name,
-        room_join=room_join,
-        room_create=room_create,
-        room_admin=room_admin,
-        can_publish=can_publish,
-        can_subscribe=can_subscribe,
-        can_publish_data=can_publish_data,
-        can_update_own_metadata=can_update_own_metadata,
-        agent=agent,
+    token = (
+        api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
+        .with_identity(identity)
+        .with_name(participant_name)
+        .with_ttl(token_ttl)
+        .with_grants(
+            api.VideoGrants(
+                room=room_name,
+                room_join=room_join,
+                room_create=room_create,
+                room_admin=room_admin,
+                can_publish=can_publish,
+                can_subscribe=can_subscribe,
+                can_publish_data=can_publish_data,
+                can_update_own_metadata=can_update_own_metadata,
+                agent=agent,
+            )
+        )
     )
 
-    token = AccessToken(
-        api_key=settings.livekit_api_key,
-        api_secret=settings.livekit_api_secret,
-    )
-    token.identity = identity
-    token.name = participant_name
-    token.ttl = token_ttl
-    token.video_grants = grants
+    # Dispatch the Kwami agent to the room when participant joins
+    if dispatch_agent:
+        target_agent = agent_name or DEFAULT_AGENT_NAME
+        metadata = kwami_id or ""
+        token = token.with_room_config(
+            RoomConfiguration(
+                agents=[RoomAgentDispatch(agent_name=target_agent, metadata=metadata)],
+            ),
+        )
 
     return token.to_jwt()

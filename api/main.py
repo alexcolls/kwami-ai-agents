@@ -4,8 +4,9 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from routes import health, token
 from config import settings
@@ -18,11 +19,28 @@ logging.basicConfig(
 logger = logging.getLogger("kwami-api")
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log incoming request bodies for debugging."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/token" and request.method == "POST":
+            body = await request.body()
+            logger.info(f"📨 Raw request body: {body.decode()[:500]}")
+            # Recreate the request with the body since we consumed it
+            from starlette.requests import Request as StarletteRequest
+            scope = request.scope
+            async def receive():
+                return {"type": "http.request", "body": body}
+            request = StarletteRequest(scope, receive)
+        return await call_next(request)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info(f"🚀 Starting {settings.app_name} v0.1.0")
     logger.info(f"📡 LiveKit URL: {settings.livekit_url}")
+    logger.info(f"🔑 API Key: {settings.livekit_api_key[:8]}...")
     logger.info(f"🌍 Environment: {settings.app_env}")
     yield
     logger.info("👋 Shutting down...")
@@ -37,6 +55,7 @@ app = FastAPI(
     redoc_url="/redoc" if not settings.is_production else None,
 )
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

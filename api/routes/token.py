@@ -1,10 +1,11 @@
 """Token generation endpoints."""
 
 import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from token_utils import create_token
 from config import settings
@@ -16,21 +17,25 @@ router = APIRouter()
 class TokenRequest(BaseModel):
     """Request body for token generation."""
 
-    room_name: str = Field(..., min_length=1, max_length=128, description="Room name to join")
-    participant_name: str = Field(
-        ..., min_length=1, max_length=128, description="Display name for participant"
+    model_config = ConfigDict(populate_by_name=True)
+
+    room_name: str = Field(
+        ..., min_length=1, max_length=128, alias="roomName", description="Room name to join"
+    )
+    participant_name: str | None = Field(
+        None, min_length=1, max_length=128, alias="participantName", description="Display name for participant"
     )
     participant_identity: str | None = Field(
-        None, max_length=128, description="Unique identity (defaults to participant_name)"
+        None, max_length=128, alias="participantIdentity", description="Unique identity (defaults to participant_name)"
     )
 
     # Permissions
-    can_publish: bool = Field(True, description="Allow publishing audio/video tracks")
-    can_subscribe: bool = Field(True, description="Allow subscribing to tracks")
-    can_publish_data: bool = Field(True, description="Allow publishing data messages")
+    can_publish: bool = Field(True, alias="canPublish", description="Allow publishing audio/video tracks")
+    can_subscribe: bool = Field(True, alias="canSubscribe", description="Allow subscribing to tracks")
+    can_publish_data: bool = Field(True, alias="canPublishData", description="Allow publishing data messages")
 
     # Kwami-specific metadata
-    kwami_id: str | None = Field(None, description="Kwami instance ID for agent matching")
+    kwami_id: str | None = Field(None, alias="kwamiId", description="Kwami instance ID for agent matching")
 
 
 class TokenResponse(BaseModel):
@@ -50,16 +55,20 @@ async def generate_token(request: TokenRequest):
     This endpoint creates a JWT token that allows a client to connect
     to a LiveKit room with the specified permissions.
     """
-    try:
-        identity = request.participant_identity or request.participant_name
+    # Auto-generate participant name if not provided
+    participant_name = request.participant_name or f"kwami-user-{int(time.time() * 1000)}"
+    identity = request.participant_identity or participant_name
 
+    logger.info(f"📥 Token request: room={request.room_name}, participant={participant_name}")
+    try:
         token = create_token(
             room_name=request.room_name,
-            participant_name=request.participant_name,
+            participant_name=participant_name,
             participant_identity=identity,
             can_publish=request.can_publish,
             can_subscribe=request.can_subscribe,
             can_publish_data=request.can_publish_data,
+            kwami_id=request.kwami_id,
         )
 
         logger.info(f"🎫 Token generated for '{identity}' in room '{request.room_name}'")
