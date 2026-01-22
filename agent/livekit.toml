@@ -1,8 +1,6 @@
-# LiveKit Cloud agent configuration
-# Run `lk agent config` to update this file
-
 [project]
-subdomain = ""  # Your LiveKit Cloud project subdomain
+subdomain = "kwami-uslb42tw"
 
 [agent]
-id = "kwami-agent"
+id = "CA_2FFmCLv7JHrd"
+name = "kwami-agent"
