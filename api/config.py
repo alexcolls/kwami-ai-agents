@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     livekit_api_key: str = Field(alias="LIVEKIT_API_KEY")
     livekit_api_secret: str = Field(alias="LIVEKIT_API_SECRET")
 
+    # Memory
+    zep_api_key: str | None = Field(default=None, alias="ZEP_API_KEY")
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

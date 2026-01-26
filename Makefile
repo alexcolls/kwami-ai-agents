@@ -25,7 +25,7 @@ help:
 # API
 # =============================================================================
 
-api-install:
+api.install:
 	cd api && uv sync
 
 api:
@@ -35,16 +35,16 @@ api:
 # Agent
 # =============================================================================
 
-agent-install:
+agent.install:
 	cd agent && uv sync
 
 agent:
-	cd agent && uv run python agent.py dev
+	cd agent && uv run python -m agent.main dev
 
-agent-create:
+agent.create:
 	cd agent && lk agent create .
 
-agent-deploy:
+agent.deploy:
 	cd agent && lk agent deploy
 
 # =============================================================================
@@ -63,13 +63,13 @@ format:
 # Docker (API only - agent deploys to LiveKit Cloud)
 # =============================================================================
 
-docker-build:
+docker.build:
 	docker build -t kwami-lk-api ./api
 
-docker-up:
+docker.up:
 	docker run -d --name kwami-lk-api -p 8080:8080 --env-file .env kwami-lk-api
 
-docker-down:
+docker.down:
 	docker stop kwami-lk-api && docker rm kwami-lk-api
 
 # =============================================================================

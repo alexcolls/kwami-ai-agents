@@ -33,11 +33,52 @@ kwami-ai-lk/
 │   ├── agent.py          # Agent entry point
 │   ├── config.py         # Kwami configuration
 │   ├── plugins.py        # STT/LLM/TTS factories
+│   ├── memory.py         # Zep Cloud memory integration
 │   ├── pyproject.toml
 │   └── livekit.toml      # LiveKit Cloud config
 ├── .env                  # Shared credentials
 ├── Makefile
 └── README.md
+```
+
+## Persistent Memory
+
+Each Kwami agent can have independent, persistent memory powered by [Zep Cloud](https://www.getzep.com/). This enables:
+
+- **Conversation history** - Remember all past conversations
+- **Fact extraction** - Automatically extract and store facts about users
+- **Temporal knowledge graphs** - Track how facts change over time
+- **Sub-200ms retrieval** - Fast context retrieval for real-time voice
+
+### Setup
+
+1. Create a Zep Cloud account at https://www.getzep.com/
+2. Get your API key from the dashboard
+3. Add `ZEP_API_KEY` to your `.env` file
+
+### How it works
+
+- Each Kwami uses its `kwami_id` as a unique user identifier in Zep
+- Conversations are automatically tracked and stored
+- Memory context is injected into the system prompt
+- The agent can use `remember_fact` and `recall_memories` tools
+
+### Configuration
+
+Memory can be configured in `config.py`:
+
+```python
+@dataclass
+class KwamiMemoryConfig:
+    enabled: bool = True                    # Enable/disable memory
+    api_key: str = ""                       # Zep API key (or ZEP_API_KEY env var)
+    user_id: str = ""                       # Override user ID
+    session_id: str = ""                    # Override session ID
+    auto_inject_context: bool = True        # Inject memory into system prompt
+    max_context_messages: int = 10          # Recent messages in context
+    include_facts: bool = True              # Include extracted facts
+    include_entities: bool = True           # Include entities
+    min_fact_relevance: float = 0.5         # Minimum fact relevance score
 ```
 
 ## Commands
@@ -117,6 +158,9 @@ LIVEKIT_API_SECRET=your-api-secret
 OPENAI_API_KEY=your-openai-key
 DEEPGRAM_API_KEY=your-deepgram-key
 CARTESIA_API_KEY=your-cartesia-key
+
+# Memory - Zep Cloud (optional, enables persistent memory)
+ZEP_API_KEY=your-zep-api-key
 
 # API Config (optional)
 APP_ENV=development

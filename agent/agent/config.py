@@ -6,10 +6,54 @@ Supports full configuration for voice AI pipelines including:
 - TTS (Text-to-Speech): Cartesia, ElevenLabs, OpenAI, Deepgram, Google
 - VAD (Voice Activity Detection): Silero
 - Realtime: OpenAI GPT-4o Realtime, Google Gemini Live
+- Memory: Zep Cloud for persistent agent memory
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Literal
+
+
+@dataclass
+class KwamiMemoryConfig:
+    """Memory configuration for Zep Cloud integration.
+    
+    Each Kwami maintains independent memory through unique user_id and session_id.
+    Zep provides:
+    - Persistent conversation history
+    - Automatic fact extraction
+    - Temporal knowledge graphs
+    - Sub-200ms context retrieval
+    """
+    
+    # Enable/disable memory (auto-enabled if ZEP_API_KEY is set)
+    enabled: bool = field(default_factory=lambda: bool(os.getenv("ZEP_API_KEY")))
+    
+    # Zep API key (defaults to ZEP_API_KEY env var)
+    api_key: str = field(default_factory=lambda: os.getenv("ZEP_API_KEY", ""))
+    
+    # Unique identifier for this Kwami's user in Zep
+    # This should be the kwami_id for independent memory per Kwami
+    user_id: str = ""
+    
+    # Session/thread ID for the current conversation
+    # If empty, a new session is created each time
+    session_id: str = ""
+    
+    # Whether to automatically inject memory context into system prompt
+    auto_inject_context: bool = True
+    
+    # Maximum number of recent messages to include in context
+    max_context_messages: int = 10
+    
+    # Whether to include extracted facts in context
+    include_facts: bool = True
+    
+    # Whether to include entities in context
+    include_entities: bool = True
+    
+    # Minimum relevance score for facts (0.0 - 1.0)
+    min_fact_relevance: float = 0.5
 
 
 @dataclass
@@ -94,24 +138,25 @@ class KwamiVoiceConfig:
     # Text-to-Speech (TTS) Configuration
     # =========================================================================
     
-    # Provider: cartesia, elevenlabs, openai, deepgram, google
-    tts_provider: str = "cartesia"
+    # Provider: openai, elevenlabs, cartesia, deepgram, google
+    tts_provider: str = "openai"
     
-    # Cartesia models: sonic-2, sonic-english, sonic-multilingual
+    # OpenAI models: tts-1, tts-1-hd, gpt-4o-mini-tts
     # ElevenLabs models: eleven_turbo_v2_5, eleven_turbo_v2, eleven_multilingual_v2,
     #                    eleven_monolingual_v1, eleven_flash_v2_5, eleven_flash_v2
-    # OpenAI models: tts-1, tts-1-hd, gpt-4o-mini-tts
+    # Cartesia models: sonic-2, sonic-english, sonic-multilingual
     # Deepgram models: aura-asteria-en, aura-luna-en, aura-stella-en, etc.
     # Google models: en-US-Studio-O, en-US-Studio-Q, en-US-Neural2-*
-    tts_model: str = "sonic-2"
+    tts_model: str = "tts-1"
     
     # Voice ID or name (provider-specific)
-    # Cartesia: UUID voice IDs (e.g., "79a125e8-cd45-4c13-8a67-188112f4dd22")
+    # OpenAI TTS: alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer
+    #             (note: ballad, verse are Realtime API only - NOT for standard TTS)
     # ElevenLabs: Voice IDs (e.g., "21m00Tcm4TlvDq8ikWAM" for Rachel)
-    # OpenAI: alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse
+    # Cartesia: UUID voice IDs (e.g., "79a125e8-cd45-4c13-8a67-188112f4dd22")
     # Deepgram: asteria, luna, stella, athena, hera, orion, arcas, perseus, etc.
     # Google: en-US-Studio-O, en-US-Studio-Q, en-US-Neural2-A, etc.
-    tts_voice: str = "79a125e8-cd45-4c13-8a67-188112f4dd22"
+    tts_voice: str = "nova"
     
     # Speech speed multiplier (0.5 - 2.0)
     tts_speed: float = 1.0
@@ -177,6 +222,7 @@ class KwamiConfig:
     - Unique Kwami instance identifiers
     - Persona configuration (personality, traits, prompts)
     - Voice pipeline configuration (STT, LLM, TTS)
+    - Memory configuration (Zep Cloud for persistent memory)
     - Tool definitions for function calling
     """
 
@@ -184,6 +230,7 @@ class KwamiConfig:
     kwami_name: str = "Kwami"
     persona: KwamiPersonaConfig = field(default_factory=KwamiPersonaConfig)
     voice: KwamiVoiceConfig = field(default_factory=KwamiVoiceConfig)
+    memory: KwamiMemoryConfig = field(default_factory=KwamiMemoryConfig)
     tools: list[dict] = field(default_factory=list)
 
 
@@ -208,8 +255,9 @@ def get_preset_config(preset: str) -> KwamiVoiceConfig:
             llm_provider="groq",
             llm_model="llama-3.1-8b-instant",
             llm_temperature=0.7,
-            tts_provider="cartesia",
-            tts_model="sonic-2",
+            tts_provider="openai",
+            tts_model="tts-1",
+            tts_voice="nova",
         ),
         "balanced": KwamiVoiceConfig(
             stt_provider="deepgram",
@@ -217,8 +265,9 @@ def get_preset_config(preset: str) -> KwamiVoiceConfig:
             llm_provider="openai",
             llm_model="gpt-4o-mini",
             llm_temperature=0.7,
-            tts_provider="cartesia",
-            tts_model="sonic-2",
+            tts_provider="openai",
+            tts_model="tts-1",
+            tts_voice="alloy",
         ),
         "quality": KwamiVoiceConfig(
             stt_provider="deepgram",
@@ -237,8 +286,9 @@ def get_preset_config(preset: str) -> KwamiVoiceConfig:
             llm_provider="openai",
             llm_model="gpt-4o",
             llm_temperature=0.7,
-            tts_provider="cartesia",
-            tts_model="sonic-multilingual",
+            tts_provider="openai",
+            tts_model="tts-1",
+            tts_voice="alloy",
         ),
         "realtime": KwamiVoiceConfig(
             pipeline_type="realtime",
