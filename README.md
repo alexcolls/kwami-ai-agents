@@ -1,6 +1,6 @@
-# Kwami AI LiveKit
+# Kwami AI Agents
 
-LiveKit token endpoint and cloud agent for Kwami AI.
+LiveKit Cloud agents for Kwami AI voice interactions.
 
 ## Quick Start
 
@@ -9,36 +9,44 @@ LiveKit token endpoint and cloud agent for Kwami AI.
 cp .env.sample .env
 # Edit .env with your credentials
 
-# Run API server (token endpoint)
-make api-install
-make api
+# Install dependencies
+make install
 
-# Run agent locally (in another terminal)
-make agent-install
-make agent
+# Run agent locally for development
+make dev
 ```
 
 ## Project Structure
 
 ```
-kwami-ai-lk/
-├── api/                  # Token endpoint API (deploy anywhere)
-│   ├── main.py           # FastAPI entry point
-│   ├── config.py         # Settings
-│   ├── token_utils.py    # Token generation
-│   ├── routes/           # API endpoints
+kwami-ai-agents/
+├── agent/                # LiveKit Cloud agent (pg agent)
+│   ├── agent/            # Agent module
+│   │   ├── main.py       # Entry point
+│   │   ├── core.py       # Core agent logic
+│   │   ├── config.py     # Kwami configuration
+│   │   ├── memory.py     # Zep Cloud memory integration
+│   │   ├── tools.py      # Agent tools
+│   │   ├── client_tools.py # Client-side tools
+│   │   └── factories/    # STT/LLM/TTS/VAD factories
+│   ├── livekit.toml      # LiveKit Cloud config
 │   ├── pyproject.toml
 │   └── Dockerfile
-├── agent/                # LiveKit Cloud agent
-│   ├── agent.py          # Agent entry point
-│   ├── config.py         # Kwami configuration
-│   ├── plugins.py        # STT/LLM/TTS factories
-│   ├── memory.py         # Zep Cloud memory integration
-│   ├── pyproject.toml
-│   └── livekit.toml      # LiveKit Cloud config
-├── .env                  # Shared credentials
+├── .env                  # Agent credentials
 ├── Makefile
 └── README.md
+```
+
+## Multiple Agents (Future)
+
+The structure supports multiple agents for different apps or tasks:
+
+```
+kwami-ai-agents/
+├── agents/
+│   ├── pg/               # Playground agent
+│   ├── assistant/        # General assistant
+│   └── support/          # Customer support agent
 ```
 
 ## Persistent Memory
@@ -63,83 +71,30 @@ Each Kwami agent can have independent, persistent memory powered by [Zep Cloud](
 - Memory context is injected into the system prompt
 - The agent can use `remember_fact` and `recall_memories` tools
 
-### Configuration
-
-Memory can be configured in `config.py`:
-
-```python
-@dataclass
-class KwamiMemoryConfig:
-    enabled: bool = True                    # Enable/disable memory
-    api_key: str = ""                       # Zep API key (or ZEP_API_KEY env var)
-    user_id: str = ""                       # Override user ID
-    session_id: str = ""                    # Override session ID
-    auto_inject_context: bool = True        # Inject memory into system prompt
-    max_context_messages: int = 10          # Recent messages in context
-    include_facts: bool = True              # Include extracted facts
-    include_entities: bool = True           # Include entities
-    min_fact_relevance: float = 0.5         # Minimum fact relevance score
-```
-
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `make api-install` | Install API dependencies |
-| `make api` | Run token API locally (http://localhost:8080) |
-| `make agent-install` | Install agent dependencies |
-| `make agent` | Run agent locally for testing |
-| `make agent-deploy` | Deploy agent to LiveKit Cloud |
-| `make lint` | Run linter on both projects |
-| `make format` | Format code in both projects |
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `GET /` | GET | API info |
-| `GET /health` | GET | Health check |
-| `POST /token` | POST | Generate LiveKit token |
-| `GET /token` | GET | Generate token (simple) |
-| `GET /docs` | GET | OpenAPI documentation |
-
-### Token Request
-
-```bash
-curl -X POST http://localhost:8080/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "room_name": "my-room",
-    "participant_name": "user-123"
-  }'
-```
+| `make install` | Install agent dependencies |
+| `make dev` | Run agent locally for testing |
+| `make deploy` | Deploy agent to LiveKit Cloud |
+| `make lint` | Run linter |
+| `make format` | Format code |
 
 ## Deployment
-
-### API (Token Endpoint)
-
-Deploy the `api/` folder to any hosting provider:
-
-```bash
-# Docker
-make docker-build
-make docker-up
-
-# Or deploy to Railway, Fly.io, Render, etc.
-```
-
-### Agent (LiveKit Cloud)
 
 Deploy the agent to LiveKit Cloud:
 
 ```bash
-cd agent
-
 # Configure your LiveKit Cloud project
+cd agent
 lk agent config
 
 # Deploy to LiveKit Cloud
 lk agent deploy
+
+# Or use make
+make deploy
 ```
 
 LiveKit Cloud handles scaling, lifecycle, and hosting automatically.
@@ -154,20 +109,20 @@ LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=your-api-key
 LIVEKIT_API_SECRET=your-api-secret
 
-# AI Providers (required for agent)
+# AI Providers (required)
 OPENAI_API_KEY=your-openai-key
 DEEPGRAM_API_KEY=your-deepgram-key
 CARTESIA_API_KEY=your-cartesia-key
 
 # Memory - Zep Cloud (optional, enables persistent memory)
 ZEP_API_KEY=your-zep-api-key
-
-# API Config (optional)
-APP_ENV=development
-DEBUG=true
-API_PORT=8080
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
+
+## Related Repositories
+
+- **[kwami-ai-api](https://github.com/alexcolls/kwami-ai-api)** - Token endpoint and memory API
+- **[kwami-ai](https://github.com/alexcolls/kwami-ai)** - TypeScript SDK
+- **[kwami-ai-pg](https://github.com/alexcolls/kwami-ai-pg)** - Playground Vue app
 
 ## License
 
