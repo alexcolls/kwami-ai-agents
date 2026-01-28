@@ -8,10 +8,7 @@ Provides comprehensive TTS creation with:
 - Caching support
 """
 
-import logging
 import os
-from functools import lru_cache
-from typing import Optional
 
 from livekit.agents import inference
 from livekit.plugins import cartesia, openai, deepgram
@@ -27,8 +24,9 @@ except ImportError:
     google = None  # type: ignore
 
 from ..config import KwamiVoiceConfig
+from ..utils.logging import get_logger
 
-logger = logging.getLogger("kwami-agent")
+logger = get_logger("tts")
 
 
 # =============================================================================

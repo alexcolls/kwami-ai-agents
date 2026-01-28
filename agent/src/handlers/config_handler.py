@@ -1,0 +1,403 @@
+"""Configuration message handlers for Kwami agent."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+from ..config import KwamiConfig
+from ..memory import create_memory
+from ..utils.logging import get_logger, log_error
+from ..utils.provider import detect_provider_change
+
+if TYPE_CHECKING:
+    from livekit.agents import AgentSession
+    from ..session import SessionState
+
+logger = get_logger("config_handler")
+
+
+async def handle_full_config(
+    session: "AgentSession",
+    state: "SessionState",
+    message: Dict[str, Any],
+    vad: Any,
+    create_agent_fn: Any,
+) -> None:
+    """Handle the 'config' message which sets the entire identity/pipeline.
+    
+    Args:
+        session: The LiveKit agent session.
+        state: Current session state.
+        message: The config message from the client.
+        vad: Voice Activity Detection instance.
+        create_agent_fn: Function to create a new agent from config.
+    """
+    try:
+        logger.info("Processing full configuration...")
+        
+        # 1. Parse into KwamiConfig
+        new_config = KwamiConfig()
+        
+        # Apply frontend voice config
+        voice_data = message.get("voice", {})
+        
+        # TTS
+        tts_data = voice_data.get("tts", {})
+        if tts_data.get("provider"):
+            new_config.voice.tts_provider = tts_data["provider"]
+        if tts_data.get("model"):
+            new_config.voice.tts_model = tts_data["model"]
+        if tts_data.get("voice"):
+            new_config.voice.tts_voice = tts_data["voice"]
+        if tts_data.get("speed"):
+            new_config.voice.tts_speed = tts_data["speed"]
+        
+        # LLM
+        llm_data = voice_data.get("llm", {})
+        if llm_data.get("provider"):
+            new_config.voice.llm_provider = llm_data["provider"]
+        if llm_data.get("model"):
+            new_config.voice.llm_model = llm_data["model"]
+        if llm_data.get("temperature"):
+            new_config.voice.llm_temperature = llm_data["temperature"]
+        if llm_data.get("maxTokens"):
+            new_config.voice.llm_max_tokens = llm_data["maxTokens"]
+        
+        # STT
+        stt_data = voice_data.get("stt", {})
+        if stt_data.get("provider"):
+            new_config.voice.stt_provider = stt_data["provider"]
+        if stt_data.get("model"):
+            new_config.voice.stt_model = stt_data["model"]
+        if stt_data.get("language"):
+            new_config.voice.stt_language = stt_data["language"]
+        
+        # Kwami details
+        # Use kwamiId from message, or fall back to user_identity (participant name)
+        kwami_id = message.get("kwamiId") or state.user_identity
+        if kwami_id:
+            new_config.kwami_id = kwami_id
+            logger.info(f"Using kwami_id for memory: {kwami_id}")
+        if message.get("kwamiName"):
+            new_config.kwami_name = message["kwamiName"]
+        
+        # Persona
+        persona_data = message.get("persona", {})
+        if persona_data.get("name"):
+            new_config.persona.name = persona_data["name"]
+        if persona_data.get("personality"):
+            new_config.persona.personality = persona_data["personality"]
+        if persona_data.get("systemPrompt"):
+            new_config.persona.system_prompt = persona_data["systemPrompt"]
+        if persona_data.get("traits"):
+            new_config.persona.traits = persona_data["traits"]
+        
+        # 2. Initialize Memory
+        memory = None
+        if new_config.memory.enabled or message.get("memory", {}).get("enabled"):
+            # Update memory config if present in message
+            mem_data = message.get("memory", {})
+            if mem_data.get("enabled") is not None:
+                new_config.memory.enabled = mem_data["enabled"]
+            
+            if new_config.memory.enabled:
+                if not new_config.memory.user_id and new_config.kwami_id:
+                    new_config.memory.user_id = f"kwami_{new_config.kwami_id}"
+                
+                memory = await create_memory(
+                    config=new_config.memory,
+                    kwami_id=new_config.kwami_id or "default",
+                    kwami_name=new_config.kwami_name,
+                )
+        
+        # 3. Create NEW Agent with this config (skip greeting since this is a reconfiguration)
+        new_agent = create_agent_fn(new_config, vad, memory, skip_greeting=True)
+        
+        # 4. Switch to new agent (state handles memory cleanup)
+        state.update_agent(session, new_agent)
+        logger.info(
+            f"Reconfigured agent: {new_config.voice.llm_provider}/{new_config.voice.tts_provider}"
+        )
+
+    except Exception as e:
+        log_error(logger, "Failed to process full config", e)
+
+
+async def handle_config_update(
+    session: "AgentSession",
+    state: "SessionState",
+    message: Dict[str, Any],
+    vad: Any,
+    create_agent_fn: Any,
+) -> None:
+    """Handle partial updates (voice, llm, persona).
+    
+    Args:
+        session: The LiveKit agent session.
+        state: Current session state.
+        message: The config update message from the client.
+        vad: Voice Activity Detection instance.
+        create_agent_fn: Function to create a new agent from config.
+    """
+    from ..agent import KwamiAgent
+    
+    update_type = message.get("updateType")
+    config_payload = message.get("config", {})
+    
+    current_agent = state.current_agent
+    if not isinstance(current_agent, KwamiAgent):
+        return
+
+    try:
+        if update_type == "voice":
+            await update_voice(session, state, current_agent, config_payload, vad, create_agent_fn)
+        elif update_type == "llm":
+            await update_llm(session, state, current_agent, config_payload, vad, create_agent_fn)
+        elif update_type == "persona":
+            await update_persona(session, current_agent, config_payload)
+            
+    except Exception as e:
+        log_error(logger, f"Error updating {update_type}", e)
+
+
+async def update_voice(
+    session: "AgentSession",
+    state: "SessionState",
+    agent: Any,
+    config: Dict[str, Any],
+    vad: Any,
+    create_agent_fn: Any,
+) -> None:
+    """Update voice/TTS configuration, switching providers if needed.
+    
+    Args:
+        session: The LiveKit agent session.
+        state: Current session state.
+        agent: The current KwamiAgent instance.
+        config: Voice configuration updates.
+        vad: Voice Activity Detection instance.
+        create_agent_fn: Function to create a new agent from config.
+    """
+    current_provider = agent.kwami_config.voice.tts_provider
+    new_model = config.get("tts_model")
+    new_voice = config.get("tts_voice")
+    
+    # Use utility function to detect provider change
+    new_provider, provider_changed = detect_provider_change(
+        current_provider,
+        new_model=new_model,
+        new_voice=new_voice,
+    )
+    
+    # Override with explicit provider if specified
+    if config.get("tts_provider"):
+        explicit_provider = config["tts_provider"]
+        if explicit_provider != new_provider:
+            new_provider = explicit_provider
+            provider_changed = new_provider != current_provider
+    
+    if provider_changed:
+        logger.info(f"Auto-detected provider change: {current_provider} -> {new_provider}")
+    
+    # ElevenLabs doesn't support speed updates via update_options, requires agent recreation
+    # Only trigger if speed actually changed from current value
+    is_elevenlabs = current_provider == "elevenlabs"
+    current_speed = agent.kwami_config.voice.tts_speed or 1.0
+    new_speed = config.get("tts_speed")
+    speed_actually_changed = new_speed is not None and float(new_speed) != float(current_speed)
+    speed_changed = speed_actually_changed and is_elevenlabs
+    
+    if provider_changed or speed_changed:
+        reason = "provider change" if provider_changed else "speed change (ElevenLabs)"
+        logger.info(f"Switching TTS: {current_provider} -> {new_provider} ({reason})")
+        
+        # Full agent switch needed for provider change
+        new_voice_config = replace(agent.kwami_config.voice)
+        new_voice_config.tts_provider = new_provider
+        if new_model:
+            new_voice_config.tts_model = new_model
+        if new_voice:
+            new_voice_config.tts_voice = new_voice
+        if config.get("tts_speed"):
+            new_voice_config.tts_speed = config["tts_speed"]
+        
+        new_config = replace(agent.kwami_config)
+        new_config.voice = new_voice_config
+        
+        new_agent = create_agent_fn(new_config, vad, agent._memory, skip_greeting=True)
+        state.update_agent(session, new_agent)
+        logger.info(f"Switched to {new_provider} TTS")
+    else:
+        # Same provider - just update options if supported
+        await _update_tts_options(agent, config, new_voice, is_elevenlabs)
+        
+        # Handle STT updates
+        await _update_stt_if_needed(session, state, agent, config, vad, create_agent_fn)
+
+
+async def _update_tts_options(
+    agent: Any,
+    config: Dict[str, Any],
+    new_voice: Optional[str],
+    is_elevenlabs: bool,
+) -> None:
+    """Update TTS options without recreating the agent."""
+    if not hasattr(agent, "tts") or not agent.tts:
+        return
+    
+    updates = {}
+    
+    # Detect TTS provider from module
+    tts_provider = getattr(agent.tts, "provider", "").lower()
+    is_elevenlabs_tts = tts_provider == "elevenlabs" or "elevenlabs" in type(agent.tts).__module__
+    
+    if new_voice:
+        # Different TTS providers use different parameter names for voice
+        if is_elevenlabs_tts:
+            updates["voice_id"] = new_voice
+        else:
+            updates["voice"] = new_voice
+    
+    # ElevenLabs doesn't support speed in update_options - requires agent recreation
+    if config.get("tts_speed") and not is_elevenlabs_tts:
+        updates["speed"] = config["tts_speed"]
+    
+    if updates and hasattr(agent.tts, "update_options"):
+        try:
+            agent.tts.update_options(**updates)
+            # Update stored config to reflect new values
+            if new_voice:
+                agent.kwami_config.voice.tts_voice = new_voice
+            if config.get("tts_speed"):
+                agent.kwami_config.voice.tts_speed = config["tts_speed"]
+            logger.info(f"Updated TTS options: {updates}")
+        except Exception as e:
+            logger.warning(f"Failed to update TTS options: {e}")
+
+
+async def _update_stt_if_needed(
+    session: "AgentSession",
+    state: "SessionState",
+    agent: Any,
+    config: Dict[str, Any],
+    vad: Any,
+    create_agent_fn: Any,
+) -> None:
+    """Update STT configuration if needed."""
+    stt_provider_changed = (
+        config.get("stt_provider") and 
+        config["stt_provider"] != agent.kwami_config.voice.stt_provider
+    )
+    stt_model_changed = (
+        config.get("stt_model") and 
+        config["stt_model"] != agent.kwami_config.voice.stt_model
+    )
+    
+    if stt_provider_changed or stt_model_changed:
+        # STT provider/model change requires agent recreation
+        current_stt = agent.kwami_config.voice.stt_provider
+        new_stt = config.get("stt_provider", current_stt)
+        logger.info(f"Switching STT: {current_stt} -> {new_stt}")
+        
+        new_voice_config = replace(agent.kwami_config.voice)
+        if config.get("stt_provider"):
+            new_voice_config.stt_provider = config["stt_provider"]
+        if config.get("stt_model"):
+            new_voice_config.stt_model = config["stt_model"]
+        if config.get("stt_language"):
+            new_voice_config.stt_language = config["stt_language"]
+        
+        new_config = replace(agent.kwami_config)
+        new_config.voice = new_voice_config
+        
+        new_agent = create_agent_fn(new_config, vad, agent._memory, skip_greeting=True)
+        state.update_agent(session, new_agent)
+        logger.info(f"Switched to {new_voice_config.stt_provider} STT")
+    elif hasattr(agent, "stt") and agent.stt:
+        # Just update STT options (language only)
+        updates = {}
+        if config.get("stt_language"):
+            updates["language"] = config["stt_language"]
+        if updates and hasattr(agent.stt, "update_options"):
+            agent.stt.update_options(**updates)
+            logger.info(f"Updated STT options: {updates}")
+
+
+async def update_llm(
+    session: "AgentSession",
+    state: "SessionState",
+    agent: Any,
+    config: Dict[str, Any],
+    vad: Any,
+    create_agent_fn: Any,
+) -> None:
+    """Update LLM configuration. Always requires agent recreation.
+    
+    Args:
+        session: The LiveKit agent session.
+        state: Current session state.
+        agent: The current KwamiAgent instance.
+        config: LLM configuration updates.
+        vad: Voice Activity Detection instance.
+        create_agent_fn: Function to create a new agent from config.
+    """
+    new_config = replace(agent.kwami_config)
+    new_voice = replace(new_config.voice)
+    
+    if config.get("provider"):
+        new_voice.llm_provider = config["provider"]
+    if config.get("model"):
+        new_voice.llm_model = config["model"]
+    if config.get("temperature"):
+        new_voice.llm_temperature = config["temperature"]
+    
+    new_config.voice = new_voice
+    new_agent = create_agent_fn(new_config, vad, agent._memory, skip_greeting=True)
+    state.update_agent(session, new_agent)
+
+
+async def update_persona(
+    session: "AgentSession",
+    agent: Any,
+    config: Dict[str, Any],
+) -> None:
+    """Update persona configuration without recreating the agent.
+    
+    Args:
+        session: The LiveKit agent session (for update_instructions).
+        agent: The current KwamiAgent instance.
+        config: Persona configuration updates.
+    """
+    persona = agent.kwami_config.persona
+    updated = False
+    
+    if "name" in config:
+        persona.name = config["name"]
+        updated = True
+    if "personality" in config:
+        persona.personality = config["personality"]
+        updated = True
+    if "systemPrompt" in config or "system_prompt" in config:
+        persona.system_prompt = config.get("systemPrompt") or config.get("system_prompt")
+        updated = True
+    if "traits" in config:
+        persona.traits = config["traits"]
+        updated = True
+    if "conversationStyle" in config or "conversation_style" in config:
+        persona.conversation_style = config.get("conversationStyle") or config.get("conversation_style")
+        updated = True
+    if "responseLength" in config or "response_length" in config:
+        persona.response_length = config.get("responseLength") or config.get("response_length")
+        updated = True
+    if "emotionalTone" in config or "emotional_tone" in config:
+        persona.emotional_tone = config.get("emotionalTone") or config.get("emotional_tone")
+        updated = True
+    
+    if updated:
+        agent.kwami_config.persona = persona
+        
+        # Rebuild and update instructions through the session
+        new_instructions = agent._build_system_prompt()
+        await agent.update_instructions(new_instructions)
+        logger.info(f"Updated persona: {persona.name} - {persona.personality[:50]}...")

@@ -21,7 +21,7 @@ make dev
 ```
 kwami-ai-agents/
 ├── agent/                # LiveKit Cloud agent (pg agent)
-│   ├── agent/            # Agent module
+│   ├── src/            # Agent module
 │   │   ├── main.py       # Entry point
 │   │   ├── core.py       # Core agent logic
 │   │   ├── config.py     # Kwami configuration
@@ -73,13 +73,13 @@ Each Kwami agent can have independent, persistent memory powered by [Zep Cloud](
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `make install` | Install agent dependencies |
-| `make dev` | Run agent locally for testing |
-| `make deploy` | Deploy agent to LiveKit Cloud |
-| `make lint` | Run linter |
-| `make format` | Format code |
+| Command        | Description                   |
+| -------------- | ----------------------------- |
+| `make install` | Install agent dependencies    |
+| `make dev`     | Run agent locally for testing |
+| `make deploy`  | Deploy agent to LiveKit Cloud |
+| `make lint`    | Run linter                    |
+| `make format`  | Format code                   |
 
 ## Deployment
 

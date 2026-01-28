@@ -1,18 +1,33 @@
+"""Client-side tool management for Kwami agent."""
+
 import asyncio
 import json
-import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional
-from livekit.agents import function_tool, RunContext
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-logger = logging.getLogger("kwami-agent")
+from livekit.agents import RunContext, function_tool
+
+from ..utils.logging import get_logger
+from ..utils.validation import validate_tool_definition
+
+if TYPE_CHECKING:
+    from ..agent import KwamiAgent
+
+logger = get_logger("client_tools")
 
 
 class ClientToolManager:
-    """Manages dynamic tools that are executed on the client side."""
+    """Manages dynamic tools that are executed on the client side.
+    
+    This class handles:
+    - Registration of client-defined tools
+    - Forwarding tool calls to the client via data channel
+    - Handling tool results from the client
+    """
 
-    def __init__(self, kwami_agent):
-        """
+    def __init__(self, kwami_agent: "KwamiAgent"):
+        """Initialize the client tool manager.
+        
         Args:
             kwami_agent: The KwamiAgent instance (needed to access the room for sending data)
         """
@@ -22,29 +37,48 @@ class ClientToolManager:
         self._tools: List[Any] = []
 
     def register_client_tools(self, tool_definitions: List[Dict[str, Any]]) -> None:
-        """Register tools defined in configuration for the LLM."""
+        """Register tools defined in configuration for the LLM.
+        
+        Args:
+            tool_definitions: List of tool definition dictionaries.
+        """
         if not tool_definitions:
             return
 
         for tool_def in tool_definitions:
+            # Validate tool definition
+            if not validate_tool_definition(tool_def):
+                continue
+            
             # Handle different formats
             func_def = tool_def.get("function", tool_def)
             tool_name = func_def.get("name")
             description = func_def.get("description", "")
             parameters = func_def.get("parameters", {})
 
-            if not tool_name:
-                continue
-
-            logger.info(f"🛠️ Registering client tool: {tool_name}")
+            logger.info(f"Registering client tool: {tool_name}")
 
             # Create the tool using function_tool with raw_schema
             tool = self._create_client_tool(tool_name, description, parameters)
             self._tools.append(tool)
             self.registered_tools.append(tool_def)
 
-    def _create_client_tool(self, tool_name: str, description: str, parameters: dict):
-        """Create a function tool that forwards calls to the client."""
+    def _create_client_tool(
+        self,
+        tool_name: str,
+        description: str,
+        parameters: dict,
+    ) -> Any:
+        """Create a function tool that forwards calls to the client.
+        
+        Args:
+            tool_name: The name of the tool.
+            description: Tool description for the LLM.
+            parameters: JSON schema for tool parameters.
+            
+        Returns:
+            A function_tool decorated handler.
+        """
         # Build the raw schema for the tool
         raw_schema = {
             "type": "function",
@@ -58,10 +92,10 @@ class ClientToolManager:
         }
 
         # Create the handler function that will be called when the tool is invoked
-        async def tool_handler(raw_arguments: dict, context: RunContext):
+        async def tool_handler(raw_arguments: dict, context: RunContext) -> str:
             tool_call_id = str(uuid.uuid4())
             logger.info(
-                f"📞 Calling client tool '{tool_name}' (id: {tool_call_id}) args: {raw_arguments}"
+                f"Calling client tool '{tool_name}' (id: {tool_call_id}) args: {raw_arguments}"
             )
 
             # Check room connection
@@ -89,9 +123,11 @@ class ClientToolManager:
                     result = await asyncio.wait_for(result_future, timeout=30.0)
                     return result
                 except asyncio.TimeoutError:
+                    logger.warning(f"Tool call timed out: {tool_name} ({tool_call_id})")
                     return "Error: Tool execution timed out"
 
             except Exception as e:
+                logger.error(f"Error executing client tool: {e}")
                 return f"Error executing tool: {str(e)}"
             finally:
                 self.pending_calls.pop(tool_call_id, None)
@@ -100,17 +136,41 @@ class ClientToolManager:
         return function_tool(tool_handler, raw_schema=raw_schema)
 
     def handle_tool_result(
-        self, tool_call_id: str, result: str, error: Optional[str] = None
+        self,
+        tool_call_id: str,
+        result: Optional[str],
+        error: Optional[str] = None,
     ) -> None:
-        """Handle incoming tool result from client."""
-        if tool_call_id in self.pending_calls:
-            future = self.pending_calls[tool_call_id]
-            if not future.done():
-                if error:
-                    future.set_result(f"Error from client: {error}")
-                else:
-                    future.set_result(result)
+        """Handle incoming tool result from client.
+        
+        Args:
+            tool_call_id: The ID of the tool call.
+            result: The result string from the client.
+            error: Optional error message.
+        """
+        if tool_call_id not in self.pending_calls:
+            logger.warning(f"Received result for unknown tool call: {tool_call_id}")
+            return
+        
+        future = self.pending_calls[tool_call_id]
+        if future.done():
+            logger.warning(f"Tool call already completed: {tool_call_id}")
+            return
+        
+        if error:
+            future.set_result(f"Error from client: {error}")
+        else:
+            future.set_result(result or "")
 
     def create_client_tools(self) -> List[Any]:
-        """Return the list of registered client tools."""
+        """Return the list of registered client tools.
+        
+        Returns:
+            List of function_tool instances.
+        """
         return self._tools
+
+    @property
+    def tool_count(self) -> int:
+        """Get the number of registered client tools."""
+        return len(self._tools)

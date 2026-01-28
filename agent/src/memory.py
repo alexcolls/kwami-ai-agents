@@ -10,19 +10,19 @@ Features:
 - Independent memory isolation per Kwami instance
 """
 
-import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from .config import KwamiMemoryConfig
+from .utils.logging import get_logger
 
 # Lazy imports for zep_cloud - only imported when memory is actually used
 if TYPE_CHECKING:
     from zep_cloud.client import AsyncZep
 
-logger = logging.getLogger("kwami-memory")
+logger = get_logger("memory")
 
 
 def _get_zep_imports():
@@ -179,9 +179,6 @@ class KwamiMemory:
                         "assistant_name": self.kwami_name,  # AI assistant name (for reference only)
                         "created_at": datetime.utcnow().isoformat(),
                     },
-                    # Don't set first_name to kwami_name - that would confuse Zep's
-                    # entity extraction since the "user" should be the human, not the AI
-                    first_name="User",
                 )
                 logger.info(f"Created Zep user: {self._user_id}")
             except Exception as e:
@@ -375,6 +372,164 @@ class KwamiMemory:
         except Exception as e:
             logger.error(f"Failed to search memory: {e}")
             return []
+
+    async def get_user_name(self) -> Optional[str]:
+        """Try to extract the user's name from the knowledge graph.
+        
+        Searches graph nodes and edges for user identity information.
+        
+        Returns:
+            The user's name if found, None otherwise.
+        """
+        if not self._initialized or not self._client:
+            return None
+        
+        import re
+        
+        # Words that are definitely NOT user names
+        excluded_names = {
+            'the', 'a', 'an', 'user', 'assistant', 'system', 'ai',
+            'kwami', self.kwami_name.lower(),
+            # Common non-name words that might appear at start of facts
+            'today', 'tomorrow', 'yesterday', 'now', 'then', 'this', 'that',
+            'they', 'their', 'he', 'she', 'it', 'we', 'you', 'i',
+        }
+        
+        def is_valid_name(name: str) -> bool:
+            """Check if a string is likely a valid user name."""
+            if not name or len(name) < 2:
+                return False
+            if name.lower() in excluded_names:
+                return False
+            # Must start with capital letter and be alphabetic
+            if not name[0].isupper() or not name.isalpha():
+                return False
+            return True
+        
+        def extract_name_from_fact(fact: str) -> Optional[str]:
+            """Extract a user name from a fact string using multiple patterns."""
+            if not fact:
+                return None
+            
+            # Pattern 1: Explicit name statements (highest confidence)
+            patterns = [
+                r"(?:user'?s?\s+)?name\s+is\s+([A-Z][a-z]+)",
+                r"(?:i'?m|i am|my name is)\s+([A-Z][a-z]+)",
+                r"called\s+([A-Z][a-z]+)",
+                r"goes by\s+([A-Z][a-z]+)",
+                r"identified (?:as|themselves as)\s+([A-Z][a-z]+)",
+                r"introduced (?:as|themselves as)\s+([A-Z][a-z]+)",
+                r"([A-Z][a-z]+)\s+(?:is the user|is the human)",
+                r"the user(?:'s name)? is\s+([A-Z][a-z]+)",
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, fact, re.IGNORECASE)
+                if match:
+                    name = match.group(1)
+                    # Capitalize properly
+                    name = name.capitalize()
+                    if is_valid_name(name):
+                        return name
+            
+            return None
+            
+        try:
+            # Strategy 1: Search for name-specific facts
+            name_queries = [
+                "user name called identified",
+                "my name is",
+                "person identity who",
+            ]
+            
+            for query in name_queries:
+                try:
+                    search_result = await self._client.graph.search(
+                        user_id=self._user_id,
+                        query=query,
+                        scope="edges",
+                        limit=10,
+                    )
+                    
+                    if search_result and search_result.edges:
+                        logger.debug(f"Found {len(search_result.edges)} edges for query '{query}'")
+                        for edge in search_result.edges:
+                            fact = getattr(edge, 'fact', '') or ''
+                            logger.debug(f"Checking fact: {fact[:100]}...")
+                            
+                            name = extract_name_from_fact(fact)
+                            if name:
+                                logger.info(f"Found user name from fact: {name}")
+                                return name
+                except Exception as e:
+                    logger.debug(f"Graph search failed for query '{query}': {e}")
+            
+            # Strategy 2: Search for facts starting with a capitalized name
+            try:
+                search_result = await self._client.graph.search(
+                    user_id=self._user_id,
+                    query="person preferences likes wants",
+                    scope="edges",
+                    limit=20,
+                )
+                
+                potential_names = []
+                
+                if search_result and search_result.edges:
+                    for edge in search_result.edges:
+                        fact = getattr(edge, 'fact', '') or ''
+                        
+                        # Pattern: "Name has/wants/likes/said/etc"
+                        match = re.match(
+                            r"^([A-Z][a-z]+)\s+(?:has|wants|likes|said|asked|mentioned|is|intends|lives|works|prefers|enjoys)",
+                            fact
+                        )
+                        if match and is_valid_name(match.group(1)):
+                            potential_names.append(match.group(1))
+                
+                # Return the most common name
+                if potential_names:
+                    from collections import Counter
+                    name_counts = Counter(potential_names)
+                    for name, count in name_counts.most_common():
+                        if is_valid_name(name):
+                            logger.info(f"Found user name from patterns: {name} (appeared {count} times)")
+                            return name
+            except Exception as e:
+                logger.debug(f"Pattern-based search failed: {e}")
+            
+            # Strategy 3: Check graph nodes for user identity
+            try:
+                nodes_result = await self._client.graph.node.get_by_user_id(user_id=self._user_id)
+                if nodes_result:
+                    for node in nodes_result:
+                        label = getattr(node, 'label', '') or getattr(node, 'name', '') or ''
+                        summary = getattr(node, 'summary', '') or ''
+                        node_type = getattr(node, 'type', '') or ''
+                        
+                        logger.debug(f"Checking node: label={label}, type={node_type}, summary={summary[:50]}...")
+                        
+                        # Check if this is a person/user node
+                        if node_type.lower() in ('person', 'user', 'human'):
+                            if is_valid_name(label):
+                                logger.info(f"Found user name from graph node (type={node_type}): {label}")
+                                return label
+                        
+                        # Check if summary indicates this is the user's identity
+                        summary_lower = summary.lower()
+                        if ('user' in summary_lower or 'identified' in summary_lower or 'person' in summary_lower) and \
+                           ('name' in summary_lower or 'themselves' in summary_lower or 'called' in summary_lower):
+                            if is_valid_name(label):
+                                logger.info(f"Found user name from graph node summary: {label}")
+                                return label
+            except Exception as e:
+                logger.debug(f"Could not get graph nodes: {e}")
+                            
+        except Exception as e:
+            logger.debug(f"Could not search for user name: {e}")
+        
+        logger.debug("No user name found in memory")
+        return None
 
     async def add_fact(self, fact: str) -> None:
         """Add a fact about the user.

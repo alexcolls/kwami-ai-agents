@@ -1,12 +1,55 @@
-import logging
+"""Built-in function tools for KwamiAgent."""
+
 from typing import Any, Dict
+
 from livekit.agents import RunContext, function_tool
 
-logger = logging.getLogger("kwami-agent")
+from ..utils.logging import get_logger
+
+logger = get_logger("tools")
+
+
+# Cartesia voice name to ID mapping
+CARTESIA_VOICE_MAP = {
+    "british lady": "79a125e8-cd45-4c13-8a67-188112f4dd22",
+    "sophia": "79a125e8-cd45-4c13-8a67-188112f4dd22",
+    "california girl": "c2ac25f9-ecc4-4f56-9095-651354df60c0",
+    "reading lady": "b7d50908-b17c-442d-ad8d-810c63997ed9",
+    "newsman": "a167e0f3-df7e-4d52-a9c3-f949145efdab",
+    "blake": "a167e0f3-df7e-4d52-a9c3-f949145efdab",
+    "commercial man": "63ff761f-c1e8-414b-b969-d1833d1c870c",
+    "friendly sidekick": "421b3369-f63f-4b03-8980-37a44df1d4e8",
+}
+
+# Language-specific greetings
+LANGUAGE_GREETINGS = {
+    "en": "Language changed to English. How can I help you?",
+    "es": "Idioma cambiado a espanol. Como puedo ayudarte?",
+    "fr": "Langue changee en francais. Comment puis-je vous aider?",
+    "de": "Sprache auf Deutsch geandert. Wie kann ich Ihnen helfen?",
+    "it": "Lingua cambiata in italiano. Come posso aiutarti?",
+    "pt": "Idioma alterado para portugues. Como posso ajuda-lo?",
+    "ja": "Language changed to Japanese. How can I help you?",
+    "ko": "Language changed to Korean. How can I help you?",
+    "zh": "Language changed to Chinese. How can I help you?",
+}
+
+
+def _is_elevenlabs_tts(tts: Any) -> bool:
+    """Check if TTS provider is ElevenLabs."""
+    provider = getattr(tts, "provider", "").lower()
+    return provider == "elevenlabs" or "elevenlabs" in type(tts).__module__
 
 
 class AgentToolsMixin:
-    """Mixin containing function tools for KwamiAgent."""
+    """Mixin containing function tools for KwamiAgent.
+    
+    This mixin assumes the following attributes exist on the class:
+    - kwami_config: KwamiConfig instance
+    - _current_voice_config: KwamiVoiceConfig instance
+    - _memory: Optional KwamiMemory instance
+    - session: AgentSession with tts and stt attributes
+    """
 
     @function_tool()
     async def get_kwami_info(self, context: RunContext) -> Dict[str, Any]:
@@ -25,7 +68,7 @@ class AgentToolsMixin:
         """Get the current time. Useful when the user asks what time it is."""
         from datetime import datetime
         return datetime.now().strftime("%I:%M %p on %A, %B %d, %Y")
-    
+
     @function_tool()
     async def change_voice(self, context: RunContext, voice_name: str) -> str:
         """Change the TTS voice. Available voices depend on the current TTS provider.
@@ -37,33 +80,24 @@ class AgentToolsMixin:
                        For OpenAI: Use 'alloy', 'echo', 'nova', 'shimmer', 'onyx', 'fable'.
         """
         try:
-            # We assume self.session is available on the main class
-            if self.session.tts is not None:
-                # Map common voice names to IDs for Cartesia
-                cartesia_voice_map = {
-                    "british lady": "79a125e8-cd45-4c13-8a67-188112f4dd22",
-                    "sophia": "79a125e8-cd45-4c13-8a67-188112f4dd22",
-                    "california girl": "c2ac25f9-ecc4-4f56-9095-651354df60c0",
-                    "reading lady": "b7d50908-b17c-442d-ad8d-810c63997ed9",
-                    "newsman": "a167e0f3-df7e-4d52-a9c3-f949145efdab",
-                    "blake": "a167e0f3-df7e-4d52-a9c3-f949145efdab",
-                    "commercial man": "63ff761f-c1e8-414b-b969-d1833d1c870c",
-                    "friendly sidekick": "421b3369-f63f-4b03-8980-37a44df1d4e8",
-                }
-                
-                # Check if it's a known name and convert to ID
-                voice_id = cartesia_voice_map.get(voice_name.lower(), voice_name)
-                
-                # Different TTS providers use different parameter names
-                tts_provider = getattr(self.session.tts, "provider", "").lower()
-                if tts_provider == "elevenlabs" or "elevenlabs" in type(self.session.tts).__module__:
-                    self.session.tts.update_options(voice_id=voice_id)
-                else:
-                    self.session.tts.update_options(voice=voice_id)
-                    
-                logger.info(f"🔊 Voice changed to: {voice_name}")
-                return f"Voice changed to {voice_name}. I'm now speaking with a different voice!"
-            return "Unable to change voice - TTS not available"
+            if not hasattr(self, "session") or self.session is None:
+                return "Unable to change voice - session not available"
+            
+            if self.session.tts is None:
+                return "Unable to change voice - TTS not available"
+            
+            # Check if it's a known name and convert to ID
+            voice_id = CARTESIA_VOICE_MAP.get(voice_name.lower(), voice_name)
+            
+            # Different TTS providers use different parameter names
+            if _is_elevenlabs_tts(self.session.tts):
+                self.session.tts.update_options(voice_id=voice_id)
+            else:
+                self.session.tts.update_options(voice=voice_id)
+            
+            logger.info(f"Voice changed to: {voice_name}")
+            return f"Voice changed to {voice_name}. I'm now speaking with a different voice!"
+            
         except Exception as e:
             logger.error(f"Failed to change voice: {e}")
             return f"Sorry, I couldn't change the voice: {str(e)}"
@@ -77,18 +111,23 @@ class AgentToolsMixin:
                    1.0 is normal speed.
         """
         try:
+            if not hasattr(self, "session") or self.session is None:
+                return "Unable to change speed - session not available"
+            
+            if self.session.tts is None:
+                return "Unable to change speed - TTS not available"
+            
             speed = max(0.5, min(2.0, speed))  # Clamp to valid range
-            if self.session.tts is not None:
-                self.session.tts.update_options(speed=speed)
-                logger.info(f"🔊 Speaking speed changed to: {speed}")
+            self.session.tts.update_options(speed=speed)
+            logger.info(f"Speaking speed changed to: {speed}")
+            
+            if speed < 0.8:
+                return f"Speed set to {speed}. I'll speak more slowly now."
+            elif speed > 1.2:
+                return f"Speed set to {speed}. I'll speak faster now."
+            else:
+                return f"Speed set to {speed}. Speaking at normal pace."
                 
-                if speed < 0.8:
-                    return f"Speed set to {speed}. I'll speak more slowly now."
-                elif speed > 1.2:
-                    return f"Speed set to {speed}. I'll speak faster now."
-                else:
-                    return f"Speed set to {speed}. Speaking at normal pace."
-            return "Unable to change speed - TTS not available"
         except Exception as e:
             logger.error(f"Failed to change speed: {e}")
             return f"Sorry, I couldn't change the speed: {str(e)}"
@@ -103,52 +142,45 @@ class AgentToolsMixin:
                      'ko' (Korean), 'zh' (Chinese).
         """
         try:
+            if not hasattr(self, "session") or self.session is None:
+                return f"Language preference noted: {language}"
+            
             language = language.lower().strip()
             
             # Update STT language
             if self.session.stt is not None:
                 self.session.stt.update_options(language=language)
-                logger.info(f"🎤 STT language changed to: {language}")
+                logger.info(f"STT language changed to: {language}")
             
             # Update TTS language if supported
             if self.session.tts is not None:
                 try:
                     self.session.tts.update_options(language=language)
-                    logger.info(f"🔊 TTS language changed to: {language}")
+                    logger.info(f"TTS language changed to: {language}")
                 except Exception:
                     pass  # Not all TTS providers support language parameter
             
-            greetings = {
-                "en": "Language changed to English. How can I help you?",
-                "es": "Idioma cambiado a español. ¿Cómo puedo ayudarte?",
-                "fr": "Langue changée en français. Comment puis-je vous aider?",
-                "de": "Sprache auf Deutsch geändert. Wie kann ich Ihnen helfen?",
-                "it": "Lingua cambiata in italiano. Come posso aiutarti?",
-                "pt": "Idioma alterado para português. Como posso ajudá-lo?",
-                "ja": "言語が日本語に変更されました。何かお手伝いできますか?",
-                "ko": "언어가 한국어로 변경되었습니다. 무엇을 도와드릴까요?",
-                "zh": "语言已更改为中文。我能帮你什么?",
-            }
+            return LANGUAGE_GREETINGS.get(language, f"Language changed to {language}.")
             
-            return greetings.get(language, f"Language changed to {language}.")
         except Exception as e:
             logger.error(f"Failed to change language: {e}")
             return f"Sorry, I couldn't change the language: {str(e)}"
-    
+
     @function_tool()
     async def get_current_voice_settings(self, context: RunContext) -> Dict[str, Any]:
         """Get the current voice pipeline settings."""
+        voice_config = self._current_voice_config
         return {
-            "tts_provider": self._current_voice_config.tts_provider,
-            "tts_model": self._current_voice_config.tts_model,
-            "tts_voice": self._current_voice_config.tts_voice,
-            "tts_speed": self._current_voice_config.tts_speed,
-            "stt_provider": self._current_voice_config.stt_provider,
-            "stt_model": self._current_voice_config.stt_model,
-            "stt_language": self._current_voice_config.stt_language,
-            "llm_provider": self._current_voice_config.llm_provider,
-            "llm_model": self._current_voice_config.llm_model,
-            "llm_temperature": self._current_voice_config.llm_temperature,
+            "tts_provider": voice_config.tts_provider,
+            "tts_model": voice_config.tts_model,
+            "tts_voice": voice_config.tts_voice,
+            "tts_speed": voice_config.tts_speed,
+            "stt_provider": voice_config.stt_provider,
+            "stt_model": voice_config.stt_model,
+            "stt_language": voice_config.stt_language,
+            "llm_provider": voice_config.llm_provider,
+            "llm_model": voice_config.llm_model,
+            "llm_temperature": voice_config.llm_temperature,
         }
 
     @function_tool()
@@ -159,7 +191,7 @@ class AgentToolsMixin:
         
         try:
             await self._memory.add_fact(fact)
-            logger.info(f"🧠 Remembered fact: {fact}")
+            logger.info(f"Remembered fact: {fact}")
             return f"I'll remember that: {fact}"
         except Exception as e:
             logger.error(f"Failed to remember fact: {e}")
