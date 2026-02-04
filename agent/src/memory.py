@@ -6,6 +6,7 @@ Each Kwami maintains independent memory through unique user IDs.
 Features:
 - Automatic conversation history tracking
 - Fact extraction and knowledge graph building
+- Custom entity type ontology for domain-specific extraction
 - Temporal context retrieval (sub-200ms)
 - Independent memory isolation per Kwami instance
 """
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from .config import KwamiMemoryConfig
+from .config import KwamiMemoryConfig, DEFAULT_ENTITY_TYPES, DEFAULT_EDGE_TYPES
 from .utils.logging import get_logger
 
 # Lazy imports for zep_cloud - only imported when memory is actually used
@@ -146,6 +147,10 @@ class KwamiMemory:
 
             # Ensure session exists
             await self._ensure_session_exists()
+            
+            # Configure ontology (entity/edge types) if enabled
+            if self.config.configure_ontology:
+                await self._configure_ontology()
 
             self._initialized = True
             logger.info(
@@ -158,6 +163,79 @@ class KwamiMemory:
             logger.error(f"Failed to initialize memory: {e}")
             self._initialized = False
             return False
+    
+    async def _configure_ontology(
+        self,
+        entity_types: list[dict] | None = None,
+        edge_types: list[dict] | None = None,
+    ) -> bool:
+        """Configure the knowledge graph ontology (entity and edge types).
+        
+        This tells Zep what types of entities and relationships to extract
+        from conversations. Uses default types if none provided.
+        
+        Args:
+            entity_types: List of entity type definitions with 'name' and 'description'
+            edge_types: List of edge type definitions with 'name' and 'description'
+            
+        Returns:
+            True if ontology was configured successfully.
+        """
+        if not self._client:
+            return False
+            
+        entity_types = entity_types or DEFAULT_ENTITY_TYPES
+        edge_types = edge_types or DEFAULT_EDGE_TYPES
+        
+        try:
+            # Build ontology specification for Zep
+            # Zep expects entity_types and edge_types as lists of dicts
+            await self._client.graph.set_ontology(
+                user_id=self._user_id,
+                entity_types=entity_types,
+                edge_types=edge_types,
+            )
+            
+            entity_names = [e["name"] for e in entity_types]
+            edge_names = [e["name"] for e in edge_types]
+            logger.info(
+                f"🧠 Configured ontology for {self._user_id}: "
+                f"{len(entity_types)} entity types ({', '.join(entity_names[:5])}...), "
+                f"{len(edge_types)} edge types ({', '.join(edge_names[:5])}...)"
+            )
+            return True
+            
+        except Exception as e:
+            # Ontology configuration is optional - don't fail initialization
+            logger.warning(f"Could not configure ontology (may not be supported on your plan): {e}")
+            return False
+    
+    async def get_ontology(self) -> dict | None:
+        """Get the current ontology configuration.
+        
+        Returns:
+            Dict with 'entity_types' and 'edge_types', or None if not available.
+        """
+        if not self._client or not self._user_id:
+            return None
+            
+        try:
+            ontology = await self._client.graph.get_ontology(user_id=self._user_id)
+            if ontology:
+                return {
+                    "entity_types": [
+                        {"name": e.name, "description": e.description}
+                        for e in (ontology.entity_types or [])
+                    ],
+                    "edge_types": [
+                        {"name": e.name, "description": e.description}
+                        for e in (ontology.edge_types or [])
+                    ],
+                }
+        except Exception as e:
+            logger.debug(f"Could not get ontology: {e}")
+        
+        return None
 
     async def _ensure_user_exists(self) -> None:
         """Create user in Zep if it doesn't exist.
@@ -372,6 +450,110 @@ class KwamiMemory:
         except Exception as e:
             logger.error(f"Failed to search memory: {e}")
             return []
+    
+    async def search_by_entity_type(
+        self, 
+        query: str, 
+        entity_types: list[str],
+        limit: int = 10,
+    ) -> list[dict]:
+        """Search the knowledge graph filtered by entity types.
+        
+        Args:
+            query: Search query
+            entity_types: List of entity type names to filter by (e.g., ["Preference", "Person"])
+            limit: Maximum number of results
+            
+        Returns:
+            List of matching nodes with their data.
+        """
+        if not self._initialized or not self._client:
+            return []
+            
+        try:
+            # Search graph nodes with type filter
+            results = await self._client.graph.search(
+                user_id=self._user_id,
+                query=query,
+                scope="nodes",
+                node_labels=entity_types,
+                limit=limit,
+            )
+            
+            nodes = []
+            if results and results.nodes:
+                for node in results.nodes:
+                    nodes.append({
+                        "name": getattr(node, 'name', ''),
+                        "type": node.labels[0] if hasattr(node, 'labels') and node.labels else 'entity',
+                        "labels": list(node.labels) if hasattr(node, 'labels') and node.labels else [],
+                        "summary": getattr(node, 'summary', ''),
+                        "uuid": getattr(node, 'uuid_', None) or getattr(node, 'uuid', None),
+                        "score": getattr(node, 'score', 0),
+                    })
+            
+            return nodes
+            
+        except Exception as e:
+            logger.debug(f"Failed to search by entity type: {e}")
+            return []
+    
+    async def get_entities_by_type(
+        self,
+        entity_type: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Get all entities of a specific type.
+        
+        Args:
+            entity_type: The entity type name (e.g., "Preference", "Person", "Location")
+            limit: Maximum number of results
+            
+        Returns:
+            List of entities of the specified type.
+        """
+        if not self._initialized or not self._client:
+            return []
+            
+        try:
+            # Get all nodes and filter by type
+            nodes_response = await self._client.graph.node.get_by_user_id(
+                user_id=self._user_id,
+                limit=limit * 2,  # Get more to filter
+            )
+            
+            entities = []
+            if nodes_response:
+                for node in nodes_response:
+                    node_labels = list(node.labels) if hasattr(node, 'labels') and node.labels else []
+                    # Check if the entity type matches (case-insensitive)
+                    if any(label.lower() == entity_type.lower() for label in node_labels):
+                        entities.append({
+                            "name": getattr(node, 'name', ''),
+                            "type": node_labels[0] if node_labels else 'entity',
+                            "labels": node_labels,
+                            "summary": getattr(node, 'summary', ''),
+                            "uuid": getattr(node, 'uuid_', None) or getattr(node, 'uuid', None),
+                            "created_at": str(node.created_at) if hasattr(node, 'created_at') and node.created_at else None,
+                        })
+                        if len(entities) >= limit:
+                            break
+            
+            return entities
+            
+        except Exception as e:
+            logger.debug(f"Failed to get entities by type: {e}")
+            return []
+    
+    async def get_preferences(self, limit: int = 20) -> list[dict]:
+        """Get user preferences from the knowledge graph.
+        
+        This is a convenience method for getting Preference entities.
+        
+        Returns:
+            List of user preferences.
+        """
+        return await self.get_entities_by_type("Preference", limit)
 
     async def get_user_name(self) -> Optional[str]:
         """Try to extract the user's name from the knowledge graph.
