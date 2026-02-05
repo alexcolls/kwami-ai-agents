@@ -2,17 +2,9 @@
 
 import unittest
 from unittest.mock import patch, MagicMock
-import sys
 
-# Mock imports for livekit plugins to avoid dependency issues during testing
-sys.modules["livekit.plugins"] = MagicMock()
-sys.modules["livekit.plugins.openai"] = MagicMock()
-sys.modules["livekit.plugins.deepgram"] = MagicMock()
-sys.modules["livekit.plugins.cartesia"] = MagicMock()
-sys.modules["livekit.plugins.elevenlabs"] = MagicMock()
-sys.modules["livekit.plugins.google"] = MagicMock()
-sys.modules["livekit.agents"] = MagicMock()
-sys.modules["livekit.agents.inference"] = MagicMock()
+# Note: livekit mocking is done in conftest.py
+
 
 from src.config import KwamiVoiceConfig
 from src.factories.tts import create_tts, _create_openai_tts
