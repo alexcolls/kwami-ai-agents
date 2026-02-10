@@ -62,7 +62,11 @@ class MemoryContext:
 
         if self.facts:
             facts_text = "\n".join(f"- {fact}" for fact in self.facts)
-            parts.append(f"## Known Facts About User\n{facts_text}")
+            parts.append(
+                "## Known Facts About the Human User\n"
+                "These facts are about the HUMAN you are talking to (NOT about you, the assistant):\n"
+                f"{facts_text}"
+            )
 
         if self.entities:
             entities_text = "\n".join(
@@ -171,8 +175,7 @@ class KwamiMemory:
     ) -> bool:
         """Configure the knowledge graph ontology (entity and edge types).
         
-        This tells Zep what types of entities and relationships to extract
-        from conversations. Uses default types if none provided.
+        Uses the Zep v3 SDK format with EntityModel/EdgeModel classes.
         
         Args:
             entity_types: List of entity type definitions with 'name' and 'description'
@@ -188,12 +191,44 @@ class KwamiMemory:
         edge_types = edge_types or DEFAULT_EDGE_TYPES
         
         try:
-            # Build ontology specification for Zep
-            # Zep expects entity_types and edge_types as lists of dicts
+            from zep_cloud.external_clients.ontology import EntityModel, EntityText, EdgeModel
+            from zep_cloud import EntityEdgeSourceTarget
+            from pydantic import Field
+            
+            # Dynamically create EntityModel subclasses from dict definitions.
+            # The Zep SDK reads the class DOCSTRING (__doc__) as the entity/edge
+            # type description -- not a class attribute.
+            entities = {}
+            for et in entity_types:
+                name = et["name"]
+                desc = et.get("description", name)
+                model_cls = type(name, (EntityModel,), {
+                    "__doc__": desc,
+                    "__annotations__": {"detail": EntityText},
+                    "detail": Field(description=desc, default=None),
+                })
+                entities[name] = model_cls
+            
+            # Dynamically create EdgeModel subclasses from dict definitions
+            edges = {}
+            for edge in edge_types:
+                name = edge["name"]
+                desc = edge.get("description", name)
+                model_cls = type(name, (EdgeModel,), {
+                    "__doc__": desc,
+                    "__annotations__": {"detail": EntityText},
+                    "detail": Field(description=desc, default=None),
+                })
+                # Edges require (ModelClass, [source/target constraints])
+                edges[name] = (
+                    model_cls,
+                    [EntityEdgeSourceTarget(source="User")],
+                )
+            
             await self._client.graph.set_ontology(
-                user_id=self._user_id,
-                entity_types=entity_types,
-                edge_types=edge_types,
+                entities=entities,
+                edges=edges,
+                user_ids=[self._user_id],
             )
             
             entity_names = [e["name"] for e in entity_types]
@@ -205,6 +240,9 @@ class KwamiMemory:
             )
             return True
             
+        except ImportError:
+            logger.warning("Zep ontology SDK classes not available, skipping ontology configuration")
+            return False
         except Exception as e:
             # Ontology configuration is optional - don't fail initialization
             logger.warning(f"Could not configure ontology (may not be supported on your plan): {e}")
@@ -392,9 +430,18 @@ class KwamiMemory:
                         limit=20,
                     )
                     if facts_response and facts_response.edges:
-                        context.facts = [
+                        # Filter out facts that are about the assistant, not the user.
+                        # Zep extracts facts from both user and assistant messages,
+                        # so facts like "Kwami is an AI assistant" would confuse the LLM
+                        # if injected as "facts about the user".
+                        assistant_name_lower = self.kwami_name.lower()
+                        raw_facts = [
                             edge.fact for edge in facts_response.edges 
                             if hasattr(edge, 'fact') and edge.fact
+                        ]
+                        context.facts = [
+                            fact for fact in raw_facts
+                            if not self._is_assistant_fact(fact, assistant_name_lower)
                         ]
                 except Exception as e:
                     logger.debug(f"Could not retrieve user facts via graph: {e}")
@@ -417,6 +464,43 @@ class KwamiMemory:
         except Exception as e:
             logger.error(f"Failed to get memory context: {e}")
             return MemoryContext()
+
+    def _is_assistant_fact(self, fact: str, assistant_name_lower: str) -> bool:
+        """Check if a fact is about the assistant rather than the user.
+        
+        Zep extracts facts from both user and assistant messages. Facts like
+        "Kwami is an AI assistant" or "Kwami greeted the user" are about the
+        assistant and should not be injected as user facts.
+        
+        Args:
+            fact: The fact string.
+            assistant_name_lower: Lowercase assistant/kwami name.
+            
+        Returns:
+            True if the fact is about the assistant, False if about the user.
+        """
+        fact_lower = fact.lower()
+        
+        # Skip facts that start with the assistant's name (e.g. "Kwami greeted...")
+        if fact_lower.startswith(assistant_name_lower + " "):
+            return True
+        
+        # Skip facts that describe the assistant's identity
+        assistant_identity_phrases = [
+            f"{assistant_name_lower} is",
+            f"{assistant_name_lower} was",
+            f"{assistant_name_lower} can",
+            f"name is {assistant_name_lower}",
+            f"called {assistant_name_lower}",
+            f"named {assistant_name_lower}",
+            f"i'm {assistant_name_lower}",
+            f"i am {assistant_name_lower}",
+        ]
+        for phrase in assistant_identity_phrases:
+            if phrase in fact_lower:
+                return True
+        
+        return False
 
     async def search(self, query: str, limit: int = 5) -> list[dict]:
         """Search memory for relevant context.
