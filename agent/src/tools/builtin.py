@@ -15,9 +15,19 @@ logger = get_logger("tools")
 
 
 def _is_elevenlabs_tts(tts: Any) -> bool:
-    """Check if TTS provider is ElevenLabs."""
+    """Check if TTS provider is ElevenLabs.
+    
+    Handles both the direct ElevenLabs plugin (livekit.plugins.elevenlabs)
+    and LiveKit Inference TTS with an ElevenLabs model (livekit.agents.inference.tts).
+    """
     provider = getattr(tts, "provider", "").lower()
-    return provider == TTSProviders.ELEVENLABS or "elevenlabs" in type(tts).__module__
+    # Check the model string for "elevenlabs" (covers inference.TTS with elevenlabs model)
+    model = str(getattr(tts, "_model", getattr(tts, "model", ""))).lower()
+    return (
+        provider == TTSProviders.ELEVENLABS
+        or "elevenlabs" in type(tts).__module__
+        or "elevenlabs" in model
+    )
 
 
 class AgentToolsMixin:
@@ -97,6 +107,11 @@ class AgentToolsMixin:
                 return "Unable to change speed - TTS not available"
             
             speed = max(0.5, min(2.0, speed))  # Clamp to valid range
+            
+            # ElevenLabs TTS does not support speed option
+            if _is_elevenlabs_tts(self.session.tts):
+                return "Speed adjustment is not supported with the current ElevenLabs voice provider."
+            
             self.session.tts.update_options(speed=speed)
             logger.info(f"Speaking speed changed to: {speed}")
             

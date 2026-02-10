@@ -105,12 +105,8 @@ DEFAULT_ENTITY_TYPES: list[dict] = [
         "description": "Products, services, software, tools, or items the user uses or is interested in."
     },
     {
-        "name": "Skill",
-        "description": "User skills, expertise, competencies, or areas of knowledge."
-    },
-    {
         "name": "Goal",
-        "description": "User goals, objectives, aspirations, or things they want to achieve."
+        "description": "User goals, objectives, aspirations, skills, expertise, or things they want to achieve."
     },
 ]
 
@@ -137,12 +133,8 @@ DEFAULT_EDGE_TYPES: list[dict] = [
         "description": "Projects or tasks the user is actively working on."
     },
     {
-        "name": "HAS_SKILL",
-        "description": "Skills or expertise the user possesses."
-    },
-    {
         "name": "WANTS_TO",
-        "description": "Goals or desires the user has expressed."
+        "description": "Goals, desires, skills, or expertise the user has expressed."
     },
     {
         "name": "ATTENDED",

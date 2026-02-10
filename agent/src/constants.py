@@ -18,8 +18,9 @@ class TTSProviders:
     CARTESIA = "cartesia"
     DEEPGRAM = "deepgram"
     GOOGLE = "google"
+    RIME = "rime"
     
-    ALL = {OPENAI, ELEVENLABS, CARTESIA, DEEPGRAM, GOOGLE}
+    ALL = {OPENAI, ELEVENLABS, CARTESIA, DEEPGRAM, GOOGLE, RIME}
 
 
 class STTProviders:
@@ -28,8 +29,9 @@ class STTProviders:
     ASSEMBLYAI = "assemblyai"
     GOOGLE = "google"
     ELEVENLABS = "elevenlabs"
+    CARTESIA = "cartesia"
     
-    ALL = {DEEPGRAM, OPENAI, ASSEMBLYAI, GOOGLE, ELEVENLABS}
+    ALL = {DEEPGRAM, OPENAI, ASSEMBLYAI, GOOGLE, ELEVENLABS, CARTESIA}
 
 
 class LLMProviders:
