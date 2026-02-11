@@ -70,8 +70,23 @@ async def entrypoint(ctx: JobContext) -> None:
     state = create_session_state(
         initial_agent=initial_agent,
         user_identity=user_identity,
+        room_name=ctx.room.name,
         vad=vad,
     )
+    
+    # Wire up metrics events for usage tracking
+    @session.on("metrics_collected")
+    def on_metrics(event):
+        metrics = event.metrics
+        metrics_type = getattr(metrics, "type", None)
+        if metrics_type == "llm_metrics":
+            state.usage_tracker.on_llm_metrics(metrics)
+        elif metrics_type == "stt_metrics":
+            state.usage_tracker.on_stt_metrics(metrics)
+        elif metrics_type == "tts_metrics":
+            state.usage_tracker.on_tts_metrics(metrics)
+        elif metrics_type == "realtime_model_metrics":
+            state.usage_tracker.on_realtime_metrics(metrics)
     
     # Setup data handler for config updates and tool results
     def handle_data(data: rtc.DataPacket) -> None:

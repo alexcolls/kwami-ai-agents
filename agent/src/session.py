@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from .usage import UsageTracker, UsageReporter
 from .utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -23,12 +24,16 @@ class SessionState:
     - Type-safe access to session state
     - Automatic memory cleanup when agents are replaced
     - Centralized state management
+    - Usage tracking for the credit system
     """
     
     current_agent: Optional["KwamiAgent"] = None
     user_identity: Optional[str] = None
+    room_name: Optional[str] = None
     vad: Any = None
     greeting_delivered: bool = False
+    usage_tracker: UsageTracker = field(default_factory=UsageTracker)
+    usage_reporter: UsageReporter = field(default_factory=UsageReporter)
     _cleanup_tasks: list = field(default_factory=list, repr=False)
     
     def update_agent(
@@ -80,7 +85,19 @@ class SessionState:
         """Clean up all pending resources.
         
         Should be called when the session ends.
+        Reports accumulated usage to the credits API before closing.
         """
+        # Report usage to credits system
+        if self.user_identity and self.room_name and self.usage_tracker.has_usage:
+            try:
+                await self.usage_reporter.report(
+                    user_id=self.user_identity,
+                    session_id=self.room_name,
+                    tracker=self.usage_tracker,
+                )
+            except Exception as e:
+                logger.error(f"Failed to report usage on cleanup: {e}")
+
         # Wait for all cleanup tasks to complete
         if self._cleanup_tasks:
             await asyncio.gather(*self._cleanup_tasks, return_exceptions=True)
@@ -105,6 +122,7 @@ class SessionState:
 def create_session_state(
     initial_agent: "KwamiAgent",
     user_identity: Optional[str] = None,
+    room_name: Optional[str] = None,
     vad: Any = None,
 ) -> SessionState:
     """Factory function to create a SessionState.
@@ -112,6 +130,7 @@ def create_session_state(
     Args:
         initial_agent: The initial KwamiAgent instance.
         user_identity: Optional user identity string.
+        room_name: Optional LiveKit room name (used for usage reporting).
         vad: Optional VAD instance.
         
     Returns:
@@ -120,5 +139,6 @@ def create_session_state(
     return SessionState(
         current_agent=initial_agent,
         user_identity=user_identity,
+        room_name=room_name,
         vad=vad,
     )
