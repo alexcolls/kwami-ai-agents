@@ -1,0 +1,33 @@
+"""Shared utilities for the memory package.
+
+Provides lazy imports for zep_cloud and common helpers to avoid
+startup errors when memory is not being used.
+"""
+
+from typing import TYPE_CHECKING
+
+from ..utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from zep_cloud.client import AsyncZep
+    from zep_cloud.types import Message as ZepMessage
+
+logger = get_logger("memory")
+
+
+def get_zep_imports():
+    """Lazy import zep_cloud to avoid startup errors when not using memory.
+
+    Returns:
+        Tuple of (AsyncZep, ZepMessage, RoleType) or (None, None, None) on failure.
+    """
+    try:
+        from zep_cloud.client import AsyncZep
+        from zep_cloud.types import Message as ZepMessage
+        from zep_cloud.types import RoleType
+
+        return AsyncZep, ZepMessage, RoleType
+    except ImportError as e:
+        logger.error(f"Failed to import zep_cloud: {e}")
+        logger.error("Install with: pip install zep-cloud")
+        return None, None, None
