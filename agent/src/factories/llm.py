@@ -8,6 +8,19 @@ except ImportError:
 from ..config import KwamiVoiceConfig
 from ..utils.provider import strip_model_prefix
 
+# OpenAI models that only support temperature=1 (default); others support 0..2
+_OPENAI_TEMPERATURE_FIXED_MODELS = ("gpt-5.1", "o1-", "o3-")
+
+
+def _openai_temperature(config: KwamiVoiceConfig, model: str) -> float:
+    """Use temperature=1 for models that only support the default (avoids API 400)."""
+    if not model:
+        return config.llm_temperature
+    lower = model.lower()
+    if any(prefix in lower for prefix in _OPENAI_TEMPERATURE_FIXED_MODELS):
+        return 1.0
+    return config.llm_temperature
+
 
 def create_llm(config: KwamiVoiceConfig):
     """Create LLM instance based on configuration."""
@@ -17,9 +30,10 @@ def create_llm(config: KwamiVoiceConfig):
     model = strip_model_prefix(config.llm_model or "", provider)
     
     if provider == "openai":
+        temp = _openai_temperature(config, model or "")
         return openai.LLM(
             model=model or "gpt-4o-mini",
-            temperature=config.llm_temperature,
+            temperature=temp,
         )
     
     elif provider == "google" and google is not None:
