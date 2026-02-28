@@ -54,14 +54,20 @@ class SessionState:
             new_agent: The new agent to switch to.
         """
         old_agent = self.current_agent
-        if old_agent and old_agent._memory:
-            # Only close memory if the new agent has a DIFFERENT memory instance
-            new_memory = getattr(new_agent, "_memory", None)
-            if new_memory is not old_agent._memory:
-                cleanup_task = asyncio.create_task(
-                    self._cleanup_memory(old_agent._memory)
-                )
-                self._cleanup_tasks.append(cleanup_task)
+        if old_agent:
+            # Close old agent's voice pipeline (STT/LLM/TTS) to avoid unclosed inference connections
+            cleanup_task = asyncio.create_task(
+                self._cleanup_agent_voice_pipeline(old_agent)
+            )
+            self._cleanup_tasks.append(cleanup_task)
+            if old_agent._memory:
+                # Only close memory if the new agent has a DIFFERENT memory instance
+                new_memory = getattr(new_agent, "_memory", None)
+                if new_memory is not old_agent._memory:
+                    cleanup_task = asyncio.create_task(
+                        self._cleanup_memory(old_agent._memory)
+                    )
+                    self._cleanup_tasks.append(cleanup_task)
         
         # Update the session with the new agent
         session.update_agent(new_agent)
@@ -72,6 +78,32 @@ class SessionState:
 
         logger.debug(f"Agent updated, cleanup tasks pending: {len(self._cleanup_tasks)}")
     
+    async def _cleanup_agent_voice_pipeline(self, agent: Any) -> None:
+        """Close STT/LLM/TTS connections to avoid unclosed inference connections.
+        
+        Args:
+            agent: The agent whose pipeline to close (e.g. previous agent after reconfigure).
+        """
+        seen: set = set()
+        for name in ("stt", "llm", "tts", "_stt", "_llm", "_tts"):
+            obj = getattr(agent, name, None)
+            if obj is None or id(obj) in seen:
+                continue
+            seen.add(id(obj))
+            try:
+                if hasattr(obj, "aclose"):
+                    await obj.aclose()
+                    logger.debug("Closed agent pipeline component: %s", name)
+                elif hasattr(obj, "close"):
+                    close_fn = getattr(obj, "close")
+                    if asyncio.iscoroutinefunction(close_fn):
+                        await close_fn()
+                    else:
+                        close_fn()
+                    logger.debug("Closed agent pipeline component: %s", name)
+            except Exception as e:
+                logger.debug("Could not close %s: %s", name, e)
+
     async def _cleanup_memory(self, memory: Any) -> None:
         """Clean up memory resources in the background.
         
@@ -126,9 +158,11 @@ class SessionState:
             await asyncio.gather(*self._cleanup_tasks, return_exceptions=True)
             self._cleanup_tasks.clear()
         
-        # Clean up current agent's memory
-        if self.current_agent and self.current_agent._memory:
-            await self._cleanup_memory(self.current_agent._memory)
+        # Close current agent's voice pipeline (STT/LLM/TTS) and memory
+        if self.current_agent:
+            await self._cleanup_agent_voice_pipeline(self.current_agent)
+            if self.current_agent._memory:
+                await self._cleanup_memory(self.current_agent._memory)
         
         logger.debug("Session cleanup complete")
     
