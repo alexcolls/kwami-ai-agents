@@ -1,7 +1,7 @@
 .PHONY: help install dev deploy lint format clean
 
 help:
-	@echo "Kwami AI Agents - Development Commands"
+	@echo "Kwami LiveKit Agent - Development Commands"
 	@echo ""
 	@echo "Agent Commands:"
 	@echo "  make install       - Install agent dependencies"

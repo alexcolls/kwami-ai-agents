@@ -19,7 +19,7 @@ make dev
 ## Project Structure
 
 ```
-kwami-ai-agents/
+kwami-lk-agent/
 ├── agent/                # LiveKit Cloud agent (pg agent)
 │   ├── src/            # Agent module
 │   │   ├── main.py       # Entry point
@@ -42,7 +42,7 @@ kwami-ai-agents/
 The structure supports multiple agents for different apps or tasks:
 
 ```
-kwami-ai-agents/
+kwami-lk-agent/
 ├── agents/
 │   ├── pg/               # Playground agent
 │   ├── assistant/        # General assistant
@@ -120,7 +120,7 @@ ZEP_API_KEY=your-zep-api-key
 
 ## Related Repositories
 
-- **[kwami-ai-api](https://github.com/alexcolls/kwami-ai-api)** - Token endpoint and memory API
+- **[kwami-lk-api](https://github.com/alexcolls/kwami-lk-api)** - Token endpoint and memory API
 - **[kwami-ai](https://github.com/alexcolls/kwami-ai)** - TypeScript SDK
 - **[kwami-ai-pg](https://github.com/alexcolls/kwami-ai-pg)** - Playground Vue app
 
