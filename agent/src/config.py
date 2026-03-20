@@ -60,8 +60,8 @@ class KwamiMemoryConfig:
 
 
 @dataclass
-class KwamiPersonaConfig:
-    """Persona configuration from the Kwami frontend."""
+class KwamiSoulConfig:
+    """Soul figuration from the Kwami frontend."""
 
     name: str = "Kwami"
     personality: str = "A friendly and helpful AI companion"
@@ -223,7 +223,7 @@ class KwamiConfig:
     
     This configuration is sent when the user connects and can include:
     - Unique Kwami instance identifiers
-    - Persona configuration (personality, traits, prompts)
+    - Soul figuration (personality, traits, prompts)
     - Voice pipeline configuration (STT, LLM, TTS)
     - Memory configuration (Zep Cloud for persistent memory)
     - Tool definitions for function calling
@@ -231,10 +231,23 @@ class KwamiConfig:
 
     kwami_id: str = ""
     kwami_name: str = "Kwami"
-    persona: KwamiPersonaConfig = field(default_factory=KwamiPersonaConfig)
+    soul: KwamiSoulConfig = field(default_factory=KwamiSoulConfig)
     voice: KwamiVoiceConfig = field(default_factory=KwamiVoiceConfig)
     memory: KwamiMemoryConfig = field(default_factory=KwamiMemoryConfig)
     tools: list[dict] = field(default_factory=list)
+
+    # Backward-compatible alias for clients/modules that still use "persona".
+    @property
+    def persona(self) -> KwamiSoulConfig:
+        return self.soul
+
+    @persona.setter
+    def persona(self, value: KwamiSoulConfig) -> None:
+        self.soul = value
+
+
+# Backward-compatible type alias for old imports.
+KwamiPersonaConfig = KwamiSoulConfig
 
 
 # =============================================================================

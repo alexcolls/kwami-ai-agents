@@ -17,6 +17,14 @@ if TYPE_CHECKING:
 logger = get_logger("config_handler")
 
 
+def _value_from_keys(config: Dict[str, Any], *keys: str) -> Any:
+    """Return the first present key value (supports falsy values)."""
+    for key in keys:
+        if key in config:
+            return config[key]
+    return None
+
+
 async def handle_full_config(
     session: "AgentSession",
     state: "SessionState",
@@ -90,16 +98,28 @@ async def handle_full_config(
         if message.get("kwamiName"):
             new_config.kwami_name = message["kwamiName"]
         
-        # Persona
-        persona_data = message.get("persona", {})
-        if persona_data.get("name"):
-            new_config.persona.name = persona_data["name"]
-        if persona_data.get("personality"):
-            new_config.persona.personality = persona_data["personality"]
-        if persona_data.get("systemPrompt"):
-            new_config.persona.system_prompt = persona_data["systemPrompt"]
-        if persona_data.get("traits"):
-            new_config.persona.traits = persona_data["traits"]
+        # Soul (supports legacy "persona" key during migration)
+        soul_data = message.get("soul") or message.get("persona", {})
+        if soul_data.get("name"):
+            new_config.soul.name = soul_data["name"]
+        if soul_data.get("personality"):
+            new_config.soul.personality = soul_data["personality"]
+        system_prompt = _value_from_keys(soul_data, "systemPrompt", "system_prompt")
+        if system_prompt is not None:
+            new_config.soul.system_prompt = system_prompt
+        if soul_data.get("traits"):
+            new_config.soul.traits = soul_data["traits"]
+        conversation_style = _value_from_keys(
+            soul_data, "conversationStyle", "conversation_style"
+        )
+        if conversation_style:
+            new_config.soul.conversation_style = conversation_style
+        response_length = _value_from_keys(soul_data, "responseLength", "response_length")
+        if response_length:
+            new_config.soul.response_length = response_length
+        emotional_tone = _value_from_keys(soul_data, "emotionalTone", "emotional_tone")
+        if emotional_tone:
+            new_config.soul.emotional_tone = emotional_tone
         
         # 2. Initialize Memory
         memory = None
@@ -117,6 +137,7 @@ async def handle_full_config(
                     config=new_config.memory,
                     kwami_id=new_config.kwami_id or "default",
                     kwami_name=new_config.kwami_name,
+                    usage_tracker=state.usage_tracker,
                 )
         
         # 3. Create NEW Agent with this config
@@ -149,7 +170,7 @@ async def handle_config_update(
     vad: Any,
     create_agent_fn: Any,
 ) -> None:
-    """Handle partial updates (voice, llm, persona).
+    """Handle partial updates (voice, llm, soul).
     
     Args:
         session: The LiveKit agent session.
@@ -172,8 +193,8 @@ async def handle_config_update(
             await update_voice(session, state, current_agent, config_payload, vad, create_agent_fn)
         elif update_type == "llm":
             await update_llm(session, state, current_agent, config_payload, vad, create_agent_fn)
-        elif update_type == "persona":
-            await update_persona(session, current_agent, config_payload)
+        elif update_type in {"soul", "persona"}:
+            await update_soul(session, current_agent, config_payload)
             
     except Exception as e:
         log_error(logger, f"Error updating {update_type}", e)
@@ -414,47 +435,60 @@ async def update_llm(
     state.update_agent(session, new_agent)
 
 
-async def update_persona(
+async def update_soul(
     session: "AgentSession",
     agent: Any,
     config: Dict[str, Any],
 ) -> None:
-    """Update persona configuration without recreating the agent.
+    """Update soul configuration without recreating the agent.
     
     Args:
         session: The LiveKit agent session (for update_instructions).
         agent: The current KwamiAgent instance.
-        config: Persona configuration updates.
+        config: Soul configuration updates.
     """
-    persona = agent.kwami_config.persona
+    soul = agent.kwami_config.soul
     updated = False
     
     if "name" in config:
-        persona.name = config["name"]
+        soul.name = config["name"]
         updated = True
     if "personality" in config:
-        persona.personality = config["personality"]
+        soul.personality = config["personality"]
         updated = True
     if "systemPrompt" in config or "system_prompt" in config:
-        persona.system_prompt = config.get("systemPrompt") or config.get("system_prompt")
+        soul.system_prompt = _value_from_keys(config, "systemPrompt", "system_prompt")
         updated = True
     if "traits" in config:
-        persona.traits = config["traits"]
+        soul.traits = config["traits"]
         updated = True
     if "conversationStyle" in config or "conversation_style" in config:
-        persona.conversation_style = config.get("conversationStyle") or config.get("conversation_style")
+        soul.conversation_style = _value_from_keys(
+            config, "conversationStyle", "conversation_style"
+        )
         updated = True
     if "responseLength" in config or "response_length" in config:
-        persona.response_length = config.get("responseLength") or config.get("response_length")
+        soul.response_length = _value_from_keys(config, "responseLength", "response_length")
         updated = True
     if "emotionalTone" in config or "emotional_tone" in config:
-        persona.emotional_tone = config.get("emotionalTone") or config.get("emotional_tone")
+        soul.emotional_tone = _value_from_keys(config, "emotionalTone", "emotional_tone")
         updated = True
-    
     if updated:
-        agent.kwami_config.persona = persona
+        agent.kwami_config.soul = soul
         
+        # Preserve memory context during live soul updates.
+        memory_text = None
+        if getattr(agent, "_last_memory_context", None) is not None:
+            try:
+                memory_text = agent._last_memory_context.to_system_prompt_addition()
+            except Exception:
+                memory_text = None
+
         # Rebuild and update instructions through the session
-        new_instructions = agent._build_system_prompt()
+        new_instructions = agent._build_system_prompt(memory_text)
         await agent.update_instructions(new_instructions)
-        logger.info(f"Updated persona: {persona.name} - {(persona.personality or '')[:50]}...")
+        logger.info(f"Updated soul: {soul.name} - {(soul.personality or '')[:50]}...")
+
+
+# Backward-compatible alias for any modules importing the old name.
+update_persona = update_soul
