@@ -72,6 +72,9 @@ class SessionState:
         # Update the session with the new agent
         session.update_agent(new_agent)
         self.current_agent = new_agent
+        new_agent.usage_tracker = self.usage_tracker
+        if getattr(new_agent, "_memory", None) and hasattr(new_agent._memory, "set_usage_tracker"):
+            new_agent._memory.set_usage_tracker(self.usage_tracker)
         # Ensure the new agent has the room so server-side tools (e.g. web_search) can publish
         if self.room is not None:
             new_agent.room = self.room

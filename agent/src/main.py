@@ -77,6 +77,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     state.room = ctx.room
     initial_agent.room = ctx.room
+    initial_agent.usage_tracker = state.usage_tracker
 
     # Wire up metrics events for usage tracking
     @session.on("metrics_collected")

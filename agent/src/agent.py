@@ -37,7 +37,7 @@ class KwamiAgent(Agent, AgentToolsMixin):
         """Initialize the Kwami agent.
         
         Args:
-            config: Kwami configuration with persona, voice settings, etc.
+            config: Kwami configuration with soul, voice settings, etc.
             vad: Voice Activity Detection instance.
             memory: Optional Zep memory instance for persistent context.
             stt: Speech-to-Text instance.
@@ -54,6 +54,7 @@ class KwamiAgent(Agent, AgentToolsMixin):
         # Track current voice config for switching
         self._current_voice_config = self.kwami_config.voice
         self.room = None  # Will be set in on_enter
+        self.usage_tracker = None
 
         # Initialize client tool manager
         self.client_tools = ClientToolManager(self)
@@ -77,7 +78,7 @@ class KwamiAgent(Agent, AgentToolsMixin):
         )
 
     def _build_system_prompt(self, memory_context: Optional[str] = None) -> str:
-        """Build the system prompt from persona configuration and memory context.
+        """Build the system prompt from soul configuration and memory context.
         
         Args:
             memory_context: Optional memory context to inject into the prompt.
@@ -85,22 +86,22 @@ class KwamiAgent(Agent, AgentToolsMixin):
         Returns:
             Complete system prompt string.
         """
-        persona = self.kwami_config.persona
+        soul = self.kwami_config.soul
         prompt_parts = []
 
         # Base personality
-        if persona.system_prompt:
-            prompt_parts.append(persona.system_prompt)
+        if soul.system_prompt:
+            prompt_parts.append(soul.system_prompt)
         else:
-            prompt_parts.append(f"You are {persona.name}, {persona.personality}.")
+            prompt_parts.append(f"You are {soul.name}, {soul.personality}.")
 
         # Traits
-        if persona.traits:
-            prompt_parts.append(f"\nKey traits: {', '.join(persona.traits)}")
+        if soul.traits:
+            prompt_parts.append(f"\nKey traits: {', '.join(soul.traits)}")
 
         # Conversation style
-        if persona.conversation_style:
-            prompt_parts.append(f"\nConversation style: {persona.conversation_style}")
+        if soul.conversation_style:
+            prompt_parts.append(f"\nConversation style: {soul.conversation_style}")
 
         # Response length guidance
         length_guide = {
@@ -108,8 +109,8 @@ class KwamiAgent(Agent, AgentToolsMixin):
             "medium": "Provide balanced responses with enough detail (2-4 sentences).",
             "long": "Give comprehensive, detailed responses when appropriate.",
         }
-        if persona.response_length in length_guide:
-            prompt_parts.append(f"\n{length_guide[persona.response_length]}")
+        if soul.response_length in length_guide:
+            prompt_parts.append(f"\n{length_guide[soul.response_length]}")
 
         # Emotional tone guidance
         tone_guide = {
@@ -118,8 +119,8 @@ class KwamiAgent(Agent, AgentToolsMixin):
             "enthusiastic": "Show enthusiasm and energy in your responses.",
             "calm": "Maintain a calm, soothing demeanor.",
         }
-        if persona.emotional_tone in tone_guide:
-            prompt_parts.append(f"\n{tone_guide[persona.emotional_tone]}")
+        if soul.emotional_tone in tone_guide:
+            prompt_parts.append(f"\n{tone_guide[soul.emotional_tone]}")
 
         # Voice interaction guidance
         prompt_parts.append(
@@ -129,6 +130,18 @@ class KwamiAgent(Agent, AgentToolsMixin):
             "Do not use emojis, asterisks, markdown, or other special characters."
         )
         prompt_parts.append("Speak naturally as if having a real conversation.")
+        prompt_parts.append(
+            "When the user asks you to control the app workspace or interface, prefer the available client workspace tools instead of telling them what to click."
+        )
+        prompt_parts.append(
+            "Use workspace tools for requests like opening panels, focusing transcription, switching the renderer, clearing search results, or checking workspace status."
+        )
+        prompt_parts.append(
+            "For visible UI changes, briefly say what action you are taking. If a request is ambiguous, ask a clarifying question instead of guessing."
+        )
+        prompt_parts.append(
+            "Do not change lasting workspace preferences unless the user clearly asks. If a tool requires confirmation, wait for that result before continuing."
+        )
         
         # User relationship guidance
         prompt_parts.append(
@@ -269,7 +282,7 @@ class KwamiAgent(Agent, AgentToolsMixin):
             Greeting instructions for the LLM.
         """
         agent_name = (
-            self.kwami_config.persona.name 
+            self.kwami_config.soul.name
             or self.kwami_config.kwami_name 
             or "Kwami"
         )
@@ -410,7 +423,7 @@ class KwamiAgent(Agent, AgentToolsMixin):
                 content = self._extract_message_content(new_message)
                 if content:
                     agent_name = (
-                        self.kwami_config.persona.name
+                        self.kwami_config.soul.name
                         or self.kwami_config.kwami_name
                     )
                     await self._memory.add_exchange(
