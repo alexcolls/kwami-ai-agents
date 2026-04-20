@@ -134,6 +134,12 @@ async def handle_full_config(
             mem_data = message.get("memory", {})
             if mem_data.get("enabled") is not None:
                 new_config.memory.enabled = mem_data["enabled"]
+            if mem_data.get("maxContextMessages") is not None:
+                new_config.memory.max_context_messages = int(mem_data["maxContextMessages"])
+            if mem_data.get("includeFacts") is not None:
+                new_config.memory.include_facts = bool(mem_data["includeFacts"])
+            if mem_data.get("minFactRelevance") is not None:
+                new_config.memory.min_fact_relevance = float(mem_data["minFactRelevance"])
             
             if new_config.memory.enabled:
                 if not new_config.memory.user_id and new_config.kwami_id:
@@ -199,6 +205,8 @@ async def handle_config_update(
             await update_voice(session, state, current_agent, config_payload, vad, create_agent_fn)
         elif update_type == "llm":
             await update_llm(session, state, current_agent, config_payload, vad, create_agent_fn)
+        elif update_type == "memory":
+            await update_memory(current_agent, config_payload)
         elif update_type in {"soul", "persona"}:
             await update_soul(session, current_agent, config_payload)
         elif update_type == "tools":
@@ -531,6 +539,46 @@ async def update_tools(
         logger.info(f"update_tools: registered {len(tools)} client tools on running agent")
     except Exception as e:
         log_error(logger, "update_tools: failed to register client tools", e)
+
+
+async def update_memory(
+    agent: Any,
+    config: Dict[str, Any],
+) -> None:
+    """Update memory retrieval settings on the running agent."""
+    memory_cfg = agent.kwami_config.memory
+    updated = False
+
+    if "maxContextMessages" in config:
+        try:
+            memory_cfg.max_context_messages = max(1, min(50, int(config["maxContextMessages"])))
+            updated = True
+        except (TypeError, ValueError):
+            logger.warning("Invalid maxContextMessages value: %s", config.get("maxContextMessages"))
+
+    if "includeFacts" in config:
+        memory_cfg.include_facts = bool(config["includeFacts"])
+        updated = True
+
+    if "minFactRelevance" in config:
+        try:
+            memory_cfg.min_fact_relevance = max(0.0, min(1.0, float(config["minFactRelevance"])))
+            updated = True
+        except (TypeError, ValueError):
+            logger.warning("Invalid minFactRelevance value: %s", config.get("minFactRelevance"))
+
+    if not updated:
+        return
+
+    agent.kwami_config.memory = memory_cfg
+    if getattr(agent, "_memory", None):
+        agent._memory.config = memory_cfg
+    logger.info(
+        "Updated memory config: max_context_messages=%s include_facts=%s min_fact_relevance=%s",
+        memory_cfg.max_context_messages,
+        memory_cfg.include_facts,
+        memory_cfg.min_fact_relevance,
+    )
 
 
 # Backward-compatible alias for any modules importing the old name.
