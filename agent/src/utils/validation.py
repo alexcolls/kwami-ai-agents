@@ -69,6 +69,7 @@ CAMEL_TO_SNAKE_MAP = {
     "conversationStyle": "conversation_style",
     "responseLength": "response_length",
     "emotionalTone": "emotional_tone",
+    "emotionalTraits": "emotional_traits",
     # Other
     "kwamiId": "kwami_id",
     "kwamiName": "kwami_name",

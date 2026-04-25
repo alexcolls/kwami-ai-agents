@@ -70,7 +70,17 @@ class KwamiSoulConfig:
     language: str = "en"
     conversation_style: str = "friendly"
     response_length: Literal["short", "medium", "long"] = "medium"
-    emotional_tone: Literal["neutral", "warm", "enthusiastic", "calm"] = "warm"
+    emotional_tone: Literal[
+        "neutral",
+        "warm",
+        "enthusiastic",
+        "calm",
+        "playful",
+        "confident",
+        "serious",
+        "compassionate",
+    ] = "warm"
+    emotional_traits: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

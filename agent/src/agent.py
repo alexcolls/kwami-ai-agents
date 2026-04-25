@@ -120,9 +120,49 @@ class KwamiAgent(Agent, AgentToolsMixin):
             "warm": "Express warmth and friendliness in your interactions.",
             "enthusiastic": "Show enthusiasm and energy in your responses.",
             "calm": "Maintain a calm, soothing demeanor.",
+            "playful": "Use a light, playful voice while staying helpful.",
+            "confident": "Speak with confident, decisive language.",
+            "serious": "Use a serious, focused, no-fluff voice.",
+            "compassionate": "Use compassionate, emotionally supportive language.",
         }
         if soul.emotional_tone in tone_guide:
             prompt_parts.append(f"\n{tone_guide[soul.emotional_tone]}")
+
+        # Emotional trait sliders (-100..100) mapped to conversational guidance
+        if soul.emotional_traits:
+            trait_labels = {
+                "happiness": ("sadder", "happier"),
+                "energy": ("more low-energy", "more energetic"),
+                "confidence": ("more tentative", "more confident"),
+                "calmness": ("more tense", "calmer"),
+                "optimism": ("more cautious", "more optimistic"),
+                "socialness": ("more reserved", "more social"),
+                "empathy": ("more detached", "more empathic"),
+                "curiosity": ("less exploratory", "more curious"),
+                "creativity": ("more literal", "more creative"),
+                "patience": ("more brisk", "more patient"),
+            }
+            directives = []
+            for key, value in soul.emotional_traits.items():
+                if key not in trait_labels:
+                    continue
+                try:
+                    score = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if abs(score) < 20:
+                    continue
+                low_label, high_label = trait_labels[key]
+                direction = high_label if score > 0 else low_label
+                strength = "slightly" if abs(score) < 50 else "noticeably"
+                directives.append(f"{strength} {direction}")
+
+            if directives:
+                prompt_parts.append(
+                    "\nVoice emotion profile: "
+                    + ", ".join(directives[:4])
+                    + ". Keep this consistent without sounding exaggerated."
+                )
 
         # Voice interaction guidance
         prompt_parts.append(
